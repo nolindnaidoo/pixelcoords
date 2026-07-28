@@ -18,7 +18,7 @@ jobs:
   windows:
     runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Build
         run: cargo build -p pixelcoords --locked
@@ -40,7 +40,7 @@ jobs:
             echo "== shoot =="
             ./target/debug/pixelcoords shoot --out spike || echo "shoot exit: $?"
           } 2>&1 | tee spike/diagnostics.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: spike-windows
@@ -50,7 +50,7 @@ jobs:
   linux-x11:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Install capture and display dependencies
         run: |
@@ -81,7 +81,7 @@ jobs:
               ./target/debug/pixelcoords shoot --out spike || echo "shoot exit: $?"
             } 2>&1 | tee spike/diagnostics.txt
           '
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: spike-linux-x11
