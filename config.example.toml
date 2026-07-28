@@ -1,0 +1,27 @@
+# pixelcoords configuration.
+# Copy to your OS config dir as pixelcoords/config.toml, or pass --config PATH.
+#   macOS:   ~/Library/Application Support/pixelcoords/config.toml
+#   Linux:   ~/.config/pixelcoords/config.toml
+#   Windows: %APPDATA%\pixelcoords\config.toml
+# Every field is optional; these are the defaults.
+
+[style]
+preview_color = "#00A0FF"  # outline while dragging a shape out
+complete_color = "#00FF66" # outline of committed shapes
+label_color = "#FFFFFF"    # captions and the HUD
+target_color = "#FFB000"   # border around the --target window
+thickness = 2              # outline width in logical px (0 hides outlines)
+fill = false               # fill shapes instead of outlining
+
+# Extra key bindings; later entries override earlier ones (and these
+# override the defaults). ACTIONS: quit, save, next_tool, delete_at_cursor,
+# label_edit_at_cursor, undo, redo, cycle_overlap, toggle_panel,
+# name_session, rotate_ccw, rotate_cw.
+# EDGE: press (default), release, repeat. WHEN: has_selection, cursor_in.
+#
+# Example: bring back bracket-key rotation alongside Q/E.
+# [[hotkeys]]
+# key = "["
+# action = "rotate_ccw"
+# edge = "repeat"
+# when = "cursor_in"

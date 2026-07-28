@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: macos-15
+            target: x86_64-apple-darwin
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux capture dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev libclang-dev libegl1-mesa-dev libgbm-dev pkg-config
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p pixelcoords
+      - name: Package
+        shell: bash
+        run: |
+          name="pixelcoords-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$name"
+          cp README.md LICENSE CHANGELOG.md config.example.toml "$name/"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/pixelcoords.exe" "$name/"
+            7z a "$name.zip" "$name"
+          else
+            cp "target/${{ matrix.target }}/release/pixelcoords" "$name/"
+            tar czf "$name.tar.gz" "$name"
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            pixelcoords-*.tar.gz
+            pixelcoords-*.zip

@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/pixelcoords-core", "crates/pixelcoords"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+readme = "README.md"
+authors = ["Nolin D Naidoo"]
+repository = "https://github.com/nolindnaidoo/pixelcoords"
+keywords = ["screenshot", "coordinates", "overlay", "automation", "capture"]
+categories = ["command-line-utilities", "development-tools", "multimedia::images"]
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
+# Every output of this tool is a number. A wrapped coordinate is silently
+# wrong data in a file someone feeds to automation, which is worse than a
+# crash — so overflow keeps panicking in release, as it does in debug.
+overflow-checks = true
+
+# unsafe policy: pixelcoords-core carries #![forbid(unsafe_code)]; the binary
+# may use unsafe only in platform modules (mac.rs) for OS API calls.
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Deliberate workspace-wide relaxations. Policy: no inline #[allow] anywhere
+# (CI enforces); anything relaxed must be listed here, visibly.
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# Internal state structs legitimately hold several independent flags; the
+# lint targets confusable public APIs, which we don't have.
+struct_excessive_bools = "allow"

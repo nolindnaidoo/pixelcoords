@@ -1,0 +1,32 @@
+[package]
+name = "pixelcoords-core"
+description = "Platform-free core logic for pixelcoords: geometry, selections, session schema, point verdicts, code emitters, template relocation, hotkeys, config, rasterizer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+readme.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+# Rasterizes the embedded JetBrains Mono for overlay text — pure Rust,
+# platform-free, no transitive dependencies of its own beyond hashbrown.
+# The hand-made bitmap glyph table it replaces was the visible ceiling on
+# text quality; antialiased vector type is the last step on that axis.
+fontdue = "0.9"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+# Tests only. The geometry here is arithmetic with invariants that hold for
+# every input — a clamped shape stays in bounds, rotation is periodic — and
+# example-based tests only ever check the examples someone thought of.
+proptest = "1"
+serde_json = "1"
+toml = "1"
+
+[lints]
+workspace = true

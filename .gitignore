@@ -1,0 +1,6 @@
+/target
+pixelcoords-captures/
+# Output directory used before the project was renamed; leftover capture
+# runs still land here on older builds.
+coordpick-captures/
+.DS_Store

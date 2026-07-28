@@ -1,0 +1,89 @@
+# Empirical platform spike: runs pixelcoords's diagnostic subcommands on real
+# Windows and Linux (X11/Xvfb) runners and uploads the output as artifacts.
+# Purpose: answer the coordinate-space questions (logical vs physical
+# origins, scale factors, capture dimensions) that the Windows/Linux ports
+# depend on — the same measure-before-building discipline the macOS port
+# used, executed remotely.
+#
+# Trigger it manually from the Actions tab. Wayland is deliberately absent:
+# a headless compositor + portal + pipewire stack on CI is fragile enough to
+# lie to us; Wayland gets spiked on a real desktop session instead.
+
+name: Platform spike
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build -p pixelcoords --locked
+      - name: Run diagnostics
+        shell: bash
+        run: |
+          mkdir -p spike
+          {
+            echo "== environment =="
+            rustc -V
+            echo "runner: windows-2025"
+            echo
+            echo "== doctor (exit code appended) =="
+            ./target/debug/pixelcoords doctor || echo "doctor exit: $?"
+            echo
+            echo "== windows =="
+            ./target/debug/pixelcoords windows || echo "windows exit: $?"
+            echo
+            echo "== shoot =="
+            ./target/debug/pixelcoords shoot --out spike || echo "shoot exit: $?"
+          } 2>&1 | tee spike/diagnostics.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spike-windows
+          path: spike/
+          if-no-files-found: warn
+
+  linux-x11:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install capture and display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb1-dev libxcb-randr0-dev \
+            libpipewire-0.3-dev libclang-dev libegl1-mesa-dev libgbm-dev pkg-config xvfb xterm
+      - name: Build
+        run: cargo build -p pixelcoords --locked
+      - name: Run diagnostics under Xvfb
+        run: |
+          mkdir -p spike
+          xvfb-run -a -s "-screen 0 1920x1080x24" bash -c '
+            # Give window enumeration something real to list.
+            xterm -T "Spike Test Window" -geometry 80x24+100+50 &
+            sleep 2
+            {
+              echo "== environment =="
+              rustc -V
+              echo "runner: ubuntu-24.04 (Xvfb 1920x1080x24, X11 backend)"
+              echo
+              echo "== doctor (exit code appended) =="
+              ./target/debug/pixelcoords doctor || echo "doctor exit: $?"
+              echo
+              echo "== windows =="
+              ./target/debug/pixelcoords windows || echo "windows exit: $?"
+              echo
+              echo "== shoot =="
+              ./target/debug/pixelcoords shoot --out spike || echo "shoot exit: $?"
+            } 2>&1 | tee spike/diagnostics.txt
+          '
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spike-linux-x11
+          path: spike/
+          if-no-files-found: warn

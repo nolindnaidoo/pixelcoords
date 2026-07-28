@@ -1,0 +1,41 @@
+[package]
+name = "pixelcoords"
+description = "Freeze your screen, mark regions, get pixel-exact coordinates and crops"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+readme.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+pixelcoords-core = { path = "../pixelcoords-core", version = "0.1.0" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+log = "0.4"
+serde_json = "1"
+softbuffer = "0.4"
+time = { version = "0.3", features = ["formatting"] }
+toml = "1"
+winit = "0.30"
+xcap = "0.9"
+
+# X11 only, and only to read _GTK_FRAME_EXTENTS: toolkits draw an invisible
+# shadow outside the window they appear to be, and xcap reports the outer
+# frame, so window-relative coordinates would be offset by the shadow.
+# Already in the tree as an xcap dependency.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+# The xdg-desktop-portal window picker behind --pick. Blocking API only —
+# no async runtime enters our code — and zbus is already compiled into
+# every Linux build as xcap's own portal transport, same version.
+zbus = "5.17"
+
+[lints]
+workspace = true

@@ -1,0 +1,26 @@
+# Advisory exceptions for `cargo audit`, reviewed individually.
+#
+# Policy: an advisory is ignored only with a reason recorded here, the same
+# way [workspace.lints] records every lint relaxation. Anything not listed
+# fails CI. Re-check these whenever the lockfile changes.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0194, RUSTSEC-2026-0195 — quick-xml 0.30.0.
+    #
+    # Both are denial of service via hostile XML: unbounded namespace
+    # allocation, and quadratic time on duplicate attribute names.
+    #
+    # quick-xml is not a dependency of this program. It is a BUILD
+    # dependency of xcb (xcb -> xcap -> pixelcoords), used by xcb's build
+    # script to generate bindings from the X protocol descriptions shipped
+    # inside the xcb crate itself. That input is fixed at publish time and
+    # is not attacker-controlled, and build dependencies are not linked
+    # into the binary, so neither advisory is reachable from anything a
+    # user of pixelcoords can influence.
+    #
+    # Fixing it means xcb upgrading; there is nothing to change here.
+    # Revisit when xcb releases a version on quick-xml >= 0.41.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]

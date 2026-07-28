@@ -1,0 +1,191 @@
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
+
+const EXAMPLES: &str = "\
+Examples:
+  pixelcoords                          freeze all monitors, mark, S saves
+  pixelcoords --target \"Notepad\"       window-relative session
+  pixelcoords resume                   pick a saved session, keep editing
+  pixelcoords assert --session <dir> --point 812,440 --label submit
+  pixelcoords emit --session <dir> --format pyautogui
+  pixelcoords find --session <dir>
+  pixelcoords doctor --json
+
+Sessions save to Downloads/pixelcoords-captures/<timestamp> unless --out
+says otherwise. Output reference:
+https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/OUTPUT.md";
+
+/// Freeze your screen, mark regions, get pixel-exact coordinates and crops.
+#[derive(Debug, Parser)]
+#[command(name = "pixelcoords", version, about, after_help = EXAMPLES)]
+pub struct Cli {
+    /// Freeze only this monitor index (default: all monitors)
+    #[arg(long)]
+    pub monitor: Option<usize>,
+
+    /// Attach to a window: matches its title (then app name), freezes that
+    /// window's monitor, and adds window-relative coordinates to the output
+    #[arg(long, value_name = "TITLE", conflicts_with = "monitor")]
+    pub target: Option<String>,
+
+    /// Linux: freeze one window chosen in the system picker (the Wayland
+    /// answer to --target); every coordinate comes out window-relative
+    #[arg(long, conflicts_with_all = ["target", "monitor"])]
+    pub pick: bool,
+
+    /// Output directory (default: Downloads/pixelcoords-captures/<timestamp>)
+    #[arg(long, value_name = "DIR")]
+    pub out: Option<PathBuf>,
+
+    /// Friendly session name ("microsoft teams") shown by the resume
+    /// picker; also settable in the overlay with N
+    #[arg(long, value_name = "TEXT")]
+    pub name: Option<String>,
+
+    /// Config file path (default: the OS config directory)
+    #[arg(long, value_name = "FILE")]
+    pub config: Option<PathBuf>,
+
+    #[arg(
+        long,
+        value_name = "SPEC",
+        help = "Bind a key: KEY=ACTION[,EDGE][,WHEN]; repeatable.\nEDGE: press|release|repeat. WHEN: has_selection|cursor_in"
+    )]
+    pub bind: Vec<String>,
+
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Check capture permissions, config, and the monitor setup; exits
+    /// nonzero when anything is unhealthy, so scripts can gate on it
+    Doctor {
+        /// Config file to validate (default: the OS config directory)
+        #[arg(long, value_name = "FILE")]
+        config: Option<PathBuf>,
+        /// Machine-readable report on stdout instead of the human one
+        #[arg(long)]
+        json: bool,
+    },
+    /// List visible windows and their titles, for use with --target
+    Windows {
+        /// Machine-readable list on stdout instead of the human table
+        #[arg(long)]
+        json: bool,
+    },
+    /// Capture every monitor straight to PNG files, no overlay, no
+    /// session — a plain scripted screenshot with the same DPI handling
+    Shoot {
+        /// Output directory (default: Downloads/pixelcoords-captures/<timestamp>)
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+    },
+    /// Test a point against a saved session's regions: prints a JSON
+    /// verdict; exits 0 on hit, 1 on miss, 2 on error
+    Assert {
+        /// Path to a session.json, or the directory containing one
+        #[arg(long, value_name = "PATH")]
+        session: PathBuf,
+        /// The point to test, as X,Y physical pixels
+        #[arg(long, value_name = "X,Y", allow_hyphen_values = true)]
+        point: String,
+        /// Count only regions with this label (case-insensitive) as hits
+        #[arg(long, value_name = "TEXT")]
+        label: Option<String>,
+        /// Coordinate space the point is in
+        #[arg(long, value_enum, default_value_t = SpaceArg::Global)]
+        space: SpaceArg,
+        /// Which monitor a `--space monitor` point is local to (optional
+        /// on single-monitor sessions)
+        #[arg(long, value_name = "INDEX")]
+        monitor: Option<usize>,
+    },
+    /// Print ready-to-paste click snippets for an automation tool, one
+    /// click per selection, in the tool's own coordinate convention
+    Emit {
+        /// Path to a session.json, or the directory containing one
+        #[arg(long, value_name = "PATH")]
+        session: PathBuf,
+        /// The automation tool to generate for
+        #[arg(long, value_enum)]
+        format: FormatArg,
+        /// Emit only selections with this label (case-insensitive)
+        #[arg(long, value_name = "TEXT")]
+        label: Option<String>,
+    },
+    /// Reopen a saved session for editing: the frozen screenshots come
+    /// back as the canvas in resizable windows, every selection is
+    /// editable again, and saves update the session in place
+    Resume {
+        /// A session directory or session.json path — or just the folder
+        /// name under Downloads/pixelcoords-captures. Omit it to pick
+        /// interactively from your saved sessions
+        #[arg(long, value_name = "PATH|NAME")]
+        session: Option<PathBuf>,
+        /// Resume the most recent session, no questions asked
+        #[arg(long, conflicts_with = "session")]
+        last: bool,
+        /// Save somewhere else instead of updating the session in place
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+    },
+    /// Give a saved session a friendly name for the resume picker
+    Rename {
+        /// A session directory, session.json path, or folder name under
+        /// Downloads/pixelcoords-captures
+        #[arg(long, value_name = "PATH|NAME")]
+        session: PathBuf,
+        /// The friendly name; an empty string clears it
+        #[arg(long, value_name = "TEXT")]
+        name: String,
+    },
+    /// Re-locate a session's regions in a fresh capture using their saved
+    /// crops: prints a JSON report; exits 0 when every region is found
+    /// unambiguously, 1 otherwise, 2 on error
+    Find {
+        /// Path to a session.json, or the directory containing one
+        #[arg(long, value_name = "PATH")]
+        session: PathBuf,
+        /// Re-locate only selections with this label (case-insensitive)
+        #[arg(long, value_name = "TEXT")]
+        label: Option<String>,
+    },
+}
+
+/// The automation tools `emit` can speak to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum FormatArg {
+    /// Python: pyautogui.click(x, y) — logical points on macOS, physical
+    /// pixels on Windows/X11
+    Pyautogui,
+    /// macOS shell: cliclick c:x,y — logical points
+    Cliclick,
+    /// X11 shell: xdotool mousemove x y click 1 — physical pixels
+    Xdotool,
+}
+
+/// Which of the session's coordinate spaces `assert --point` is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum SpaceArg {
+    /// Global desktop pixels (`global_px`)
+    Global,
+    /// Monitor-local pixels (`px`); pair with --monitor on multi-monitor
+    /// sessions
+    Monitor,
+    /// Pixels relative to the --target window's top-left (`window_px`)
+    Window,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_definition_is_consistent() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+}

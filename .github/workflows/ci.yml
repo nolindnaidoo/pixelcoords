@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install Linux capture dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev libclang-dev libegl1-mesa-dev libgbm-dev pkg-config
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo build --workspace --locked
+
+  msrv:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+      - name: Install Linux capture dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev libclang-dev libegl1-mesa-dev libgbm-dev pkg-config
+      - name: Verify the declared rust-version actually builds
+        run: cargo check --workspace --locked
+
+  policy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Forbid inline lint suppressions
+        run: |
+          if grep -rn '#\[allow(' crates --include='*.rs'; then
+            echo 'Inline #[allow] found — fix the lint or relax it in [workspace.lints].'
+            exit 1
+          fi
+
+  # AGENTS.md sets a 90% line coverage floor per module for the core crate.
+  # Enforced per module, not on the total: a total hides one module
+  # sliding while the others carry it.
+  coverage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      # No apt dependencies on purpose: pixelcoords-core is platform-free,
+      # so needing them here would itself be the bug.
+      - name: Measure core coverage
+        # Run the tests once, then render both reports from that data.
+        run: |
+          cargo llvm-cov -p pixelcoords-core --no-report
+          cargo llvm-cov report -p pixelcoords-core --json --output-path coverage.json
+          cargo llvm-cov report -p pixelcoords-core --html
+      - name: Publish the browsable report
+        # Uploaded even when the floor check below fails — a failing run is
+        # exactly when someone wants to see which lines are uncovered.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: target/llvm-cov/html/
+          if-no-files-found: error
+      - name: Enforce the per-module floor
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          FLOOR = 90.0
+          files = json.load(open("coverage.json"))["data"][0]["files"]
+          under = []
+          for f in files:
+              name = f["filename"].split("/")[-1]
+              pct = f["summary"]["lines"]["percent"]
+              print(f"{name:16} {pct:6.2f}%")
+              if pct < FLOOR:
+                  under.append((name, pct))
+          if under:
+              print(f"\nAGENTS.md sets a {FLOOR}% line coverage floor per module:")
+              for name, pct in under:
+                  print(f"  {name}: {pct:.2f}%")
+              sys.exit(1)
+          PY
+
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-audit
+      # Exceptions, with the reasoning for each, live in .cargo/audit.toml.
+      - run: cargo audit
