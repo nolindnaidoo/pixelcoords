@@ -25,9 +25,13 @@ jobs:
           components: rustfmt, clippy
       - name: Install Linux capture dependencies
         if: runner.os == 'Linux'
+        # The runners' apt mirror occasionally hangs mid-fetch; without a
+        # timeout that stalls a required check for hours. Fail in minutes
+        # and retry transient fetch errors instead.
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev libclang-dev libegl1-mesa-dev libgbm-dev pkg-config
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y -o Acquire::Retries=3 libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev libclang-dev libegl1-mesa-dev libgbm-dev pkg-config
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --locked
@@ -41,9 +45,11 @@ jobs:
         with:
           toolchain: "1.88"
       - name: Install Linux capture dependencies
+        # Same stall guard as the test job above.
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev libclang-dev libegl1-mesa-dev libgbm-dev pkg-config
+          sudo apt-get update -o Acquire::Retries=3
+          sudo apt-get install -y -o Acquire::Retries=3 libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev libclang-dev libegl1-mesa-dev libgbm-dev pkg-config
       - name: Verify the declared rust-version actually builds
         run: cargo check --workspace --locked
 

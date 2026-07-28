@@ -14,6 +14,11 @@ name: Platform spike
 on:
   workflow_dispatch:
 
+# Checkout and artifact upload are all this workflow does; the token
+# never needs write access to anything.
+permissions:
+  contents: read
+
 jobs:
   windows:
     runs-on: windows-2025
