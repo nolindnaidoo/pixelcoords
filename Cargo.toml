@@ -8,6 +8,7 @@ edition = "2024"
 rust-version = "1.88"
 license = "MIT"
 readme = "README.md"
+homepage = "https://pixelcoords.dev"
 authors = ["Nolin D Naidoo"]
 repository = "https://github.com/nolindnaidoo/pixelcoords"
 keywords = ["screenshot", "coordinates", "overlay", "automation", "capture"]
