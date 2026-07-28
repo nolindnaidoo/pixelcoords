@@ -17,11 +17,9 @@
   </a>
 </p>
 
-<!-- Demo GIF goes here once recorded:
 <p align="center">
-  <img src="docs/assets/demo.gif" alt="pixelcoords demo" style="max-width: 100%; height: auto;" />
+  <img src="docs/assets/demo.gif" alt="pixelcoords demo: freeze a window, mark shapes, save machine-readable coordinates" style="max-width: 100%; height: auto;" />
 </p>
--->
 
 Every screen tool that measures pixels ends at a human's eyeball: a
 ruler shows you a number, a screenshot app draws an arrow, a mouse
