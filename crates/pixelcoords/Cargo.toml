@@ -31,7 +31,7 @@ xcap = "0.9"
 # frame, so window-relative coordinates would be offset by the shadow.
 # Already in the tree as an xcap dependency.
 [target.'cfg(target_os = "linux")'.dependencies]
-x11rb = "0.13"
+x11rb = "0.14"
 # The xdg-desktop-portal window picker behind --pick. Blocking API only —
 # no async runtime enters our code — and zbus is already compiled into
 # every Linux build as xcap's own portal transport, same version.
