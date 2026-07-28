@@ -45,7 +45,8 @@ output.
   an X connection. Every mainstream desktop ships Xwayland and starts it
   on demand; nothing needs configuring.
 - **Window bounds are the window you can see.** Toolkits draw an
-  invisible shadow outside their windows — 26px per side under GNOME —
+  invisible shadow outside their windows — 26 px left/right, 23 top,
+  29 bottom under GNOME 46 —
   and X11 reports that outer frame. `windows`, the `--target` outline,
   and every `window_px` coordinate are inset to the visible edge, so
   window-relative coordinates land where a click would.

@@ -44,11 +44,16 @@ tool in this category and give it away.
 
 ## Install
 
+Prebuilt binaries for macOS, Windows, and Linux are on the
+[releases page](https://github.com/nolindnaidoo/pixelcoords/releases) —
+download, unpack, run. Or build it with cargo:
+
 ```bash
 cargo install pixelcoords
 ```
 
-Rust 1.88+. On Linux, build dependencies first:
+Rust 1.88+ for the cargo route. On Linux it needs build dependencies
+first:
 
 ```bash
 sudo apt-get install -y libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev \
@@ -122,8 +127,9 @@ Knowing what a tool is means knowing what it isn't. These are settled:
 - [docs/OUTPUT.md](docs/OUTPUT.md) — session.json schema, crops, cutouts, jq recipes
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — colors, key bindings, config file
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — fixes, behaviors, FAQ
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — building from source, CI gates, tests, releases
 - [CHANGELOG.md](CHANGELOG.md) — what changed and why
-- [CONTRIBUTING.md](CONTRIBUTING.md) — bug reports, PRs, development setup
+- [CONTRIBUTING.md](CONTRIBUTING.md) — bug reports and pull requests
 
 ## License
 

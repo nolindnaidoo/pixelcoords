@@ -9,8 +9,8 @@ If a pull request follows this document, review is fast.
 
 Cross-platform screen coordinate picker. v1 is **snapshot mode**: capture a
 frozen screenshot per monitor → fullscreen overlay showing it → draw
-rectangle, circle, and triangle selections (move, resize, rotate, label) →
-save JSON coordinates + PNG crops. This model is the only one that works on
+rectangle, ellipse, triangle, polygon, and freehand selections (move,
+resize, rotate, label) → save JSON coordinates + PNG crops. This model is the only one that works on
 Wayland, so it is the base for every platform. "Live mode" (a transparent
 overlay over a live app) is a possible later addition for Windows/macOS/X11
 — do not build toward it prematurely.
@@ -19,7 +19,8 @@ overlay over a live app) is a possible later addition for Windows/macOS/X11
 
 - `crates/pixelcoords-core` — pure logic: geometry, selections, session
   schema, point verdicts, code emitters, template relocation, hotkey
-  grammar, config, bitmap font, CPU rasterizer. **Zero
+  grammar, config, strings table, embedded vector font (fontdue), CPU
+  rasterizer. **Zero
   platform deps, `#![forbid(unsafe_code)]`, everything unit-tested.** If a
   platform type (winit, xcap, Win32) appears in this crate, that is a bug.
 - `crates/pixelcoords` — the binary: winit event loop, softbuffer
@@ -69,8 +70,8 @@ Flat over nested, guards over branches:
   fields, and malformed input are errors with actionable messages — not
   fallbacks. (`serde(deny_unknown_fields)` on config types is deliberate.)
 - **User-visible strings** route through `core::strings` so localization
-  can land later without a refactor. The bitmap font is uppercase-only;
-  HUD text is written accordingly.
+  can land later without a refactor. The embedded JetBrains Mono covers
+  Latin, Cyrillic, and Greek; text outside that coverage will not render.
 
 ## Coordinates (read before touching geometry, capture, or save)
 
@@ -114,8 +115,9 @@ Flat over nested, guards over branches:
 
 - `session.json` carries `"schema": 1`. New fields are optional and
   skipped when absent (`skip_serializing_if`); a breaking change bumps the
-  version. Rotation is stored as `rot_deg` metadata for rects but baked
-  into vertices for triangles — keep stored geometry exact for consumers.
+  version. Rotation is stored as `rot_deg` metadata for rects and ellipses but
+  baked into vertices for triangles and polys — keep stored geometry
+  exact for consumers.
 - Saves must never destroy user data: only files this session wrote may
   be cleaned up, deletions happen only after the new save is fully on
   disk, and foreign files in the output directory are untouchable.
