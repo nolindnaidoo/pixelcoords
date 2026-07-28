@@ -15,6 +15,9 @@
   <a href="https://github.com/nolindnaidoo/pixelcoords/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" />
   </a>
+  <a href="https://pixelcoords.dev">
+    <img src="https://img.shields.io/badge/web-pixelcoords.dev-00A0FF.svg" alt="pixelcoords.dev" />
+  </a>
 </p>
 
 <p align="center">
@@ -121,6 +124,7 @@ Knowing what a tool is means knowing what it isn't. These are settled:
 
 ## Documentation
 
+- [pixelcoords.dev](https://pixelcoords.dev) — the website: demo, comparisons, how-to
 - [docs/CLI.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CLI.md) — every command, flag, control, and exit code
 - [docs/OUTPUT.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/OUTPUT.md) — session.json schema, crops, cutouts, jq recipes
 - [docs/CONFIGURATION.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CONFIGURATION.md) — colors, key bindings, config file
@@ -132,3 +136,5 @@ Knowing what a tool is means knowing what it isn't. These are settled:
 ## License
 
 MIT — see [LICENSE](https://github.com/nolindnaidoo/pixelcoords/blob/main/LICENSE). Bundled: JetBrains Mono (OFL 1.1).
+
+Built by [nolindnaidoo](https://github.com/nolindnaidoo).
