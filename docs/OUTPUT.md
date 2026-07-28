@@ -1,8 +1,7 @@
 # Output reference
 
-Every save (`W`) writes one directory — default
-`Downloads/pixelcoords-captures/<UTC timestamp>/`, the one folder every
-OS gives a user and every user knows to look in — or wherever `--out`
+Every save (`S`) writes one directory — default
+`Downloads/pixelcoords-captures/<UTC timestamp>/`, or wherever `--out`
 points. (A system with no known Downloads directory — headless Linux
 without XDG user dirs — falls back to the working directory.)
 Saving again during the same session updates the same directory: crops that
@@ -154,7 +153,7 @@ re-encode.
 # global coordinates of every selection labeled "login button"
 jq '.selections[] | select(.label == "login button") | .global_px' session.json
 
-# center of the first selection, as x,y
+# center of the first selection (rect shapes), as x,y
 jq -r '.selections[0].px | "\(.x + .w/2),\(.y + .h/2)"' session.json
 ```
 

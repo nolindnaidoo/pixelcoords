@@ -17,11 +17,9 @@
   </a>
 </p>
 
-<!-- Demo GIF goes here once recorded:
 <p align="center">
-  <img src="docs/assets/demo.gif" alt="pixelcoords demo" style="max-width: 100%; height: auto;" />
+  <img src="docs/assets/demo.gif" alt="pixelcoords demo: freeze a window, mark shapes, save machine-readable coordinates" style="max-width: 100%; height: auto;" />
 </p>
--->
 
 Every screen tool that measures pixels ends at a human's eyeball: a
 ruler shows you a number, a screenshot app draws an arrow, a mouse
@@ -44,11 +42,16 @@ tool in this category and give it away.
 
 ## Install
 
+Prebuilt binaries for macOS, Windows, and Linux are on the
+[releases page](https://github.com/nolindnaidoo/pixelcoords/releases) —
+download, unpack, run. Or build it with cargo:
+
 ```bash
 cargo install pixelcoords
 ```
 
-Rust 1.88+. On Linux, build dependencies first:
+Rust 1.88+ for the cargo route. On Linux it needs build dependencies
+first:
 
 ```bash
 sudo apt-get install -y libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev \
@@ -102,14 +105,29 @@ for a pixel loupe, `Esc` backs out / quits. Full table in
 Multi-monitor and mixed-DPI layouts are exercised by tests but not yet
 verified on real hardware. This table is kept honest — claims match runs.
 
+## Non-goals
+
+Knowing what a tool is means knowing what it isn't. These are settled:
+
+- **OCR** — text extraction is a different product; platform tools and
+  Shottr own it.
+- **Live (unfrozen) measurement** — the freeze *is* the thesis: nothing
+  moves between look and click.
+- **Annotation** — arrows, blur, and highlights are a screenshot
+  editor's job; labels here exist for machines, not slides.
+- **Recording / GIF capture** — the product is the frozen instant, not
+  the timeline; ShareX exists.
+- **Cloud upload, sharing, accounts** — offline by design, permanently.
+
 ## Documentation
 
 - [docs/CLI.md](docs/CLI.md) — every command, flag, control, and exit code
 - [docs/OUTPUT.md](docs/OUTPUT.md) — session.json schema, crops, cutouts, jq recipes
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — colors, key bindings, config file
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — fixes, behaviors, FAQ
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — building from source, CI gates, tests, releases
 - [CHANGELOG.md](CHANGELOG.md) — what changed and why
-- [CONTRIBUTING.md](CONTRIBUTING.md) — bug reports, PRs, development setup
+- [CONTRIBUTING.md](CONTRIBUTING.md) — bug reports and pull requests
 
 ## License
 

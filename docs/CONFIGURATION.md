@@ -76,7 +76,7 @@ or per run: `--bind KEY=ACTION[,EDGE][,WHEN]` (repeatable).
   (the cursor is over a shape). Omitted means always.
 
 Binding a key removes *all* default bindings for that key, on every edge —
-rebinding `[` will not leave the default's repeat-edge rotation behind.
+rebinding `q` will not leave the default's repeat-edge rotation behind.
 Among your own bindings, later entries win for the same key and edge.
 Unknown keys, actions, edges, or conditions are startup errors, not silent
 no-ops.
