@@ -1,0 +1,43 @@
+name: Bug report
+description: Something did the wrong thing, crashed, or refused to run.
+labels: ["bug"]
+body:
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      description: On Linux, include the session type and desktop environment.
+      placeholder: "macOS 15.5 · Windows 11 24H2 · Ubuntu 24.04 (Wayland, GNOME 46)"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: pixelcoords version
+      description: The output of `pixelcoords --version`.
+      placeholder: pixelcoords 0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor output
+      description: Paste the full output of `pixelcoords doctor`.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: >-
+        Optional but often decisive: the session.json involved, a
+        screenshot, or — for misbehavior without a crash — the output of a
+        rerun with `RUST_LOG=debug`.
