@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting guide
+    url: https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/TROUBLESHOOTING.md
+    about: Permission prompts, blank captures, and platform quirks — check here first.

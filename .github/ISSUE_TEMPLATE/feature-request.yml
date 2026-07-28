@@ -1,0 +1,19 @@
+name: Feature request
+description: Something pixelcoords should do and doesn't.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >-
+        What you're trying to do and where the tool stops short. The
+        problem matters more than the proposed feature — a different fix
+        may fall out of it.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Optional — how you imagine it working.
