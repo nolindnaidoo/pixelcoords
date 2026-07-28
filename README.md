@@ -102,6 +102,20 @@ for a pixel loupe, `Esc` backs out / quits. Full table in
 Multi-monitor and mixed-DPI layouts are exercised by tests but not yet
 verified on real hardware. This table is kept honest — claims match runs.
 
+## Non-goals
+
+Knowing what a tool is means knowing what it isn't. These are settled:
+
+- **OCR** — text extraction is a different product; platform tools and
+  Shottr own it.
+- **Live (unfrozen) measurement** — the freeze *is* the thesis: nothing
+  moves between look and click.
+- **Annotation** — arrows, blur, and highlights are a screenshot
+  editor's job; labels here exist for machines, not slides.
+- **Recording / GIF capture** — the product is the frozen instant, not
+  the timeline; ShareX exists.
+- **Cloud upload, sharing, accounts** — offline by design, permanently.
+
 ## Documentation
 
 - [docs/CLI.md](docs/CLI.md) — every command, flag, control, and exit code

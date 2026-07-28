@@ -2,6 +2,11 @@ name: Feature request
 description: Something pixelcoords should do and doesn't.
 labels: ["enhancement"]
 body:
+  - type: markdown
+    attributes:
+      value: >-
+        Check the README's **Non-goals** section first — those are
+        settled and won't be reopened.
   - type: textarea
     id: problem
     attributes:
