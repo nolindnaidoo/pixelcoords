@@ -1,0 +1,23 @@
+# Weekly dependency updates, one grouped PR per ecosystem instead of a
+# PR per crate. Patch and minor cargo updates auto-merge once every
+# required CI check passes (dependabot-automerge.yml); major bumps fall
+# outside the group and wait for a human. Published releases are
+# unaffected either way — crates.io publishes are manual.
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      cargo-minor-patch:
+        applies-to: version-updates
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
