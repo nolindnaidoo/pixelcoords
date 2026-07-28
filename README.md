@@ -12,13 +12,13 @@
   <a href="https://crates.io/crates/pixelcoords">
     <img src="https://img.shields.io/crates/v/pixelcoords.svg" alt="crates.io" />
   </a>
-  <a href="LICENSE">
+  <a href="https://github.com/nolindnaidoo/pixelcoords/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" />
   </a>
 </p>
 
 <p align="center">
-  <img src="docs/assets/demo.gif" alt="pixelcoords demo: freeze a window, mark shapes, save machine-readable coordinates" style="max-width: 100%; height: auto;" />
+  <img src="https://github.com/nolindnaidoo/pixelcoords/raw/main/docs/assets/demo.gif" alt="pixelcoords demo: freeze a window, mark shapes, save machine-readable coordinates" style="max-width: 100%; height: auto;" />
 </p>
 
 Every screen tool that measures pixels ends at a human's eyeball: a
@@ -59,7 +59,7 @@ sudo apt-get install -y libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev \
 ```
 
 macOS asks for Screen Recording permission on first run —
-[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) covers it.
+[docs/TROUBLESHOOTING.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/TROUBLESHOOTING.md) covers it.
 
 ## Sixty seconds
 
@@ -83,15 +83,15 @@ pixelcoords resume                # pick any saved session, keep editing it
 Window-relative marking: `--target "Title"` on macOS/Windows/X11, or
 `--pick` on Wayland. Every command speaks exit codes and JSON where a
 script would care — the complete reference with every flag is
-[docs/CLI.md](docs/CLI.md).
+[docs/CLI.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CLI.md).
 
 ## Controls
 
 Drag draws; the on-screen panel teaches everything else. The six that
 matter: `W` cycles the tool, `A` labels, `S` saves, `Z` undoes, hold `M`
 for a pixel loupe, `Esc` backs out / quits. Full table in
-[docs/CLI.md](docs/CLI.md); every key is rebindable via
-[docs/CONFIGURATION.md](docs/CONFIGURATION.md).
+[docs/CLI.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CLI.md); every key is rebindable via
+[docs/CONFIGURATION.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CONFIGURATION.md).
 
 ## Platform status
 
@@ -121,14 +121,14 @@ Knowing what a tool is means knowing what it isn't. These are settled:
 
 ## Documentation
 
-- [docs/CLI.md](docs/CLI.md) — every command, flag, control, and exit code
-- [docs/OUTPUT.md](docs/OUTPUT.md) — session.json schema, crops, cutouts, jq recipes
-- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — colors, key bindings, config file
-- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — fixes, behaviors, FAQ
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — building from source, CI gates, tests, releases
-- [CHANGELOG.md](CHANGELOG.md) — what changed and why
-- [CONTRIBUTING.md](CONTRIBUTING.md) — bug reports and pull requests
+- [docs/CLI.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CLI.md) — every command, flag, control, and exit code
+- [docs/OUTPUT.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/OUTPUT.md) — session.json schema, crops, cutouts, jq recipes
+- [docs/CONFIGURATION.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CONFIGURATION.md) — colors, key bindings, config file
+- [docs/TROUBLESHOOTING.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/TROUBLESHOOTING.md) — fixes, behaviors, FAQ
+- [docs/DEVELOPMENT.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/DEVELOPMENT.md) — building from source, CI gates, tests, releases
+- [CHANGELOG.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/CHANGELOG.md) — what changed and why
+- [CONTRIBUTING.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/CONTRIBUTING.md) — bug reports and pull requests
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Bundled: JetBrains Mono (OFL 1.1).
+MIT — see [LICENSE](https://github.com/nolindnaidoo/pixelcoords/blob/main/LICENSE). Bundled: JetBrains Mono (OFL 1.1).

@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org). Pre-1.0 policy:
 CLI or the session schema; **patch** (0.x.y) for fixes. 1.0.0 comes when
 the schema and CLI are declared stable.
 
+## 0.1.1
+
+- **README links work on crates.io now.** crates.io resolves a README's
+  relative links against the crate's own subdirectory
+  (`crates/pixelcoords/`), so every docs link — and the demo GIF — was
+  broken on the crate page. All README links and the GIF are absolute
+  URLs now. No code changes.
+
 ## 0.1.0
 
 The initial release: a screen-coordinate toolchain built around a frozen
