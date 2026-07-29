@@ -6,6 +6,18 @@ follow [Semantic Versioning](https://semver.org). Pre-1.0 policy:
 CLI or the session schema; **patch** (0.x.y) for fixes. 1.0.0 comes when
 the schema and CLI are declared stable.
 
+## 0.2.1
+
+Doc-only patch. `pixelcoords-core`'s install snippet said
+`pixelcoords-core = "0.1"` in the 0.2.0 release. That is a caret range
+against 0.1.x, so a reader copy-pasting from the top of the crates.io
+page landed on 0.1.1 and the old API rather than 0.2.0. Snippet bumped
+to `"0.2"`, and the doctest fixtures updated to match the current
+version.
+
+Adds a release checklist to `docs/DEVELOPMENT.md` naming this specific
+trap first, so a future minor cut cannot repeat it.
+
 ## 0.2.0
 
 **Breaking.** `--target` mode changed shape and one public API changed in
