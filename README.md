@@ -87,8 +87,10 @@ pixelcoords find --session <dir>
 pixelcoords resume                # pick any saved session, keep editing it
 ```
 
-Window-relative marking: `--target "Title"` on macOS/Windows/X11, or
-`--pick` on Wayland. Every command speaks exit codes and JSON where a
+Window-attached sessions with `--target "Title"` (macOS/Windows/X11)
+or `--pick` (Wayland): drawing is locked to the window, and every mark
+records `window_px` alongside the usual coordinates so the session stays
+valid when the window moves. Every command speaks exit codes and JSON where a
 script would care — the complete reference with every flag is
 [docs/CLI.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CLI.md).
 
