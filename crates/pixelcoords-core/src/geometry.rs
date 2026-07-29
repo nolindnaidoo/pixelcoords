@@ -345,28 +345,37 @@ impl Shape {
     /// New shape position for a drag-move, clamped so the shape cannot leave
     /// `bounds`. `grab_offset` is cursor-at-grab minus `grab_origin`.
     #[must_use]
-    pub fn clamp_move(&self, grab_offset: Point, cursor: Point, bounds: Size) -> Self {
+    pub fn clamp_move(&self, grab_offset: Point, cursor: Point, region: Rect) -> Self {
+        // The drawable region may be a subrect of the frame (in `--target`
+        // mode it is the window's rect). Every extent that used to be
+        // `[0, bounds]` is now `[region.origin, region.origin + region.size]`.
+        let right = region.x + region.w;
+        let bottom = region.y + region.h;
         match *self {
             Self::Rect(rect) => {
-                let nx = (cursor.x - grab_offset.x).clamp(0, (bounds.w - rect.w).max(0));
-                let ny = (cursor.y - grab_offset.y).clamp(0, (bounds.h - rect.h).max(0));
+                let nx = (cursor.x - grab_offset.x).clamp(region.x, (right - rect.w).max(region.x));
+                let ny =
+                    (cursor.y - grab_offset.y).clamp(region.y, (bottom - rect.h).max(region.y));
                 Self::Rect(Rect::new(nx, ny, rect.w, rect.h))
             }
             Self::Circle { r, .. } => {
-                let min_c = r.max(0);
-                let cx = (cursor.x - grab_offset.x).clamp(min_c, (bounds.w - r).max(r));
-                let cy = (cursor.y - grab_offset.y).clamp(min_c, (bounds.h - r).max(r));
+                let min_x = region.x + r.max(0);
+                let min_y = region.y + r.max(0);
+                let cx = (cursor.x - grab_offset.x).clamp(min_x, (right - r).max(min_x));
+                let cy = (cursor.y - grab_offset.y).clamp(min_y, (bottom - r).max(min_y));
                 Self::Circle { cx, cy, r }
             }
             Self::Ellipse { rx, ry, .. } => {
-                let cx = (cursor.x - grab_offset.x).clamp(rx.max(0), (bounds.w - rx).max(rx));
-                let cy = (cursor.y - grab_offset.y).clamp(ry.max(0), (bounds.h - ry).max(ry));
+                let min_x = region.x + rx.max(0);
+                let min_y = region.y + ry.max(0);
+                let cx = (cursor.x - grab_offset.x).clamp(min_x, (right - rx).max(min_x));
+                let cy = (cursor.y - grab_offset.y).clamp(min_y, (bottom - ry).max(min_y));
                 Self::Ellipse { cx, cy, rx, ry }
             }
             Self::Triangle { .. } | Self::Poly { .. } => {
                 let b = self.bbox();
-                let nx = (cursor.x - grab_offset.x).clamp(0, (bounds.w - b.w).max(0));
-                let ny = (cursor.y - grab_offset.y).clamp(0, (bounds.h - b.h).max(0));
+                let nx = (cursor.x - grab_offset.x).clamp(region.x, (right - b.w).max(region.x));
+                let ny = (cursor.y - grab_offset.y).clamp(region.y, (bottom - b.h).max(region.y));
                 self.translated(nx - b.x, ny - b.y)
             }
         }
@@ -407,14 +416,14 @@ impl Shape {
         &self,
         handle: ResizeHandle,
         cursor: Point,
-        bounds: Size,
+        region: Rect,
         keep_aspect: bool,
     ) -> Self {
         let clamped = Point::new(
-            cursor.x.clamp(0, bounds.w - 1),
-            cursor.y.clamp(0, bounds.h - 1),
+            cursor.x.clamp(region.x, region.x + region.w - 1),
+            cursor.y.clamp(region.y, region.y + region.h - 1),
         );
-        self.resize_to_local(handle, clamped, bounds, keep_aspect)
+        self.resize_to_local(handle, clamped, region, keep_aspect)
     }
 
     /// `resize_to` without the cursor-to-bounds clamp — used by the rotated
@@ -425,7 +434,7 @@ impl Shape {
         &self,
         handle: ResizeHandle,
         clamped: Point,
-        bounds: Size,
+        region: Rect,
         keep_aspect: bool,
     ) -> Self {
         const MIN: i32 = 2;
@@ -450,7 +459,7 @@ impl Shape {
                 rect,
                 (left, right, top, bottom),
                 clamped,
-                bounds,
+                region,
                 keep_aspect,
             )),
             (
@@ -468,7 +477,7 @@ impl Shape {
                     ell.bbox(),
                     (left, right, top, bottom),
                     clamped,
-                    bounds,
+                    region,
                     keep_aspect,
                 );
                 ellipse_in_box(bb, false)
@@ -487,7 +496,7 @@ impl Shape {
                     old,
                     (left, right, top, bottom),
                     clamped,
-                    bounds,
+                    region,
                     keep_aspect,
                 );
                 scale_into_box(&poly, old, new)
@@ -506,7 +515,7 @@ impl Shape {
                     old,
                     (left, right, top, bottom),
                     clamped,
-                    bounds,
+                    region,
                     keep_aspect,
                 );
                 tri.mapped_between_boxes(old, new)
@@ -846,21 +855,21 @@ impl Shape {
         deg: i32,
         handle: ResizeHandle,
         cursor: Point,
-        bounds: Size,
+        region: Rect,
         keep_aspect: bool,
     ) -> Self {
         if normalize_deg(deg) == 0 || matches!(self, Self::Circle { .. }) {
-            return self.resize_to(handle, cursor, bounds, keep_aspect);
+            return self.resize_to(handle, cursor, region, keep_aspect);
         }
         // Clamp in the visual frame (where the cursor actually lives), THEN
         // inverse-rotate — clamping the local-frame point instead makes the
-        // cursor stop tracking near screen edges.
+        // cursor stop tracking near region edges.
         let visual = Point::new(
-            cursor.x.clamp(0, bounds.w - 1),
-            cursor.y.clamp(0, bounds.h - 1),
+            cursor.x.clamp(region.x, region.x + region.w - 1),
+            cursor.y.clamp(region.y, region.y + region.h - 1),
         );
         let local = rotate_point_about(visual, self.pivot(), -deg);
-        self.resize_to_local(handle, local, bounds, keep_aspect)
+        self.resize_to_local(handle, local, region, keep_aspect)
     }
 
     /// `clamp_move` keeping the *rotated* silhouette on screen.
@@ -870,14 +879,16 @@ impl Shape {
         deg: i32,
         grab_offset: Point,
         cursor: Point,
-        bounds: Size,
+        region: Rect,
     ) -> Self {
         if normalize_deg(deg) == 0 || matches!(self, Self::Circle { .. }) {
-            return self.clamp_move(grab_offset, cursor, bounds);
+            return self.clamp_move(grab_offset, cursor, region);
         }
         let bb = self.rotated_bbox(deg);
-        let nx = (cursor.x - grab_offset.x).clamp(0, (bounds.w - bb.w).max(0));
-        let ny = (cursor.y - grab_offset.y).clamp(0, (bounds.h - bb.h).max(0));
+        let right = region.x + region.w;
+        let bottom = region.y + region.h;
+        let nx = (cursor.x - grab_offset.x).clamp(region.x, (right - bb.w).max(region.x));
+        let ny = (cursor.y - grab_offset.y).clamp(region.y, (bottom - bb.h).max(region.y));
         self.translated(nx - bb.x, ny - bb.y)
     }
 
@@ -1016,7 +1027,7 @@ fn resize_box(
     rect: Rect,
     (left, right, top, bottom): (bool, bool, bool, bool),
     clamped: Point,
-    bounds: Size,
+    region: Rect,
     keep_aspect: bool,
 ) -> Rect {
     const MIN: i32 = 2;
@@ -1043,10 +1054,20 @@ fn resize_box(
         match (left || right, top || bottom) {
             (true, true) => {
                 // Corner: dominant axis sets the scale, capped so the
-                // locked box never leaves the bounds.
+                // locked box never leaves the region.
                 let mut s = (f64::from(x1 - x0) / w0).max(f64::from(y1 - y0) / h0);
-                let avail_w = if left { x1 } else { bounds.w - x0 };
-                let avail_h = if top { y1 } else { bounds.h - y0 };
+                let region_right = region.x + region.w;
+                let region_bottom = region.y + region.h;
+                let avail_w = if left {
+                    x1 - region.x
+                } else {
+                    region_right - x0
+                };
+                let avail_h = if top {
+                    y1 - region.y
+                } else {
+                    region_bottom - y0
+                };
                 s = s.min(f64::from(avail_w) / w0).min(f64::from(avail_h) / h0);
                 let w = ((w0 * s).round() as i32).max(MIN);
                 let h = ((h0 * s).round() as i32).max(MIN);
@@ -1058,17 +1079,17 @@ fn resize_box(
                 // on where the box was.
                 let h = ((f64::from(x1 - x0) * h0 / w0).round() as i32)
                     .max(MIN)
-                    .min(bounds.h);
+                    .min(region.h);
                 let center_y = rect.y + rect.h / 2;
-                y0 = (center_y - h / 2).clamp(0, bounds.h - h);
+                y0 = (center_y - h / 2).clamp(region.y, region.y + region.h - h);
                 y1 = y0 + h;
             }
             (false, _) => {
                 let w = ((f64::from(y1 - y0) * w0 / h0).round() as i32)
                     .max(MIN)
-                    .min(bounds.w);
+                    .min(region.w);
                 let center_x = rect.x + rect.w / 2;
-                x0 = (center_x - w / 2).clamp(0, bounds.w - w);
+                x0 = (center_x - w / 2).clamp(region.x, region.x + region.w - w);
                 x1 = x0 + w;
             }
         }
@@ -1083,8 +1104,8 @@ fn resize_box(
     }
     // Sub-MIN input box only: the MIN floor can push it past a screen
     // edge; shift it back inside without shrinking.
-    let x0 = x0.clamp(0, (bounds.w - w).max(0));
-    let y0 = y0.clamp(0, (bounds.h - h).max(0));
+    let x0 = x0.clamp(region.x, (region.x + region.w - w).max(region.x));
+    let y0 = y0.clamp(region.y, (region.y + region.h - h).max(region.y));
     Rect::new(x0, y0, w, h)
 }
 
@@ -1219,7 +1240,7 @@ mod tests {
         let grab = Point::new(0, 0);
         for cx in [-500, 0, 960, 5000] {
             for cy in [-500, 0, 540, 5000] {
-                let Shape::Rect(r) = s.clamp_move(grab, Point::new(cx, cy), BOUNDS) else {
+                let Shape::Rect(r) = s.clamp_move(grab, Point::new(cx, cy), BOUNDS_RECT) else {
                     panic!("rect stayed rect");
                 };
                 assert!(r.x >= 0 && r.y >= 0, "({cx},{cy}) gave {r:?}");
@@ -1245,7 +1266,7 @@ mod tests {
                     cx: ncx,
                     cy: ncy,
                     r,
-                } = s.clamp_move(grab, Point::new(cx, cy), BOUNDS)
+                } = s.clamp_move(grab, Point::new(cx, cy), BOUNDS_RECT)
                 else {
                     panic!("circle stayed circle");
                 };
@@ -1270,7 +1291,7 @@ mod tests {
             cy: 100,
             r: 2000,
         };
-        let moved = s.clamp_move(Point::new(0, 0), Point::new(0, 0), BOUNDS);
+        let moved = s.clamp_move(Point::new(0, 0), Point::new(0, 0), BOUNDS_RECT);
         assert_eq!(
             moved,
             Shape::Circle {
@@ -1371,7 +1392,7 @@ mod tests {
         let resized = s.resize_to(
             ResizeHandle::CircleRadius,
             Point::new(100, 180),
-            BOUNDS,
+            BOUNDS_RECT,
             false,
         );
         assert_eq!(
@@ -1386,7 +1407,7 @@ mod tests {
         let tiny = s.resize_to(
             ResizeHandle::CircleRadius,
             Point::new(100, 100),
-            BOUNDS,
+            BOUNDS_RECT,
             false,
         );
         assert_eq!(
@@ -1408,7 +1429,7 @@ mod tests {
             top: false,
             bottom: true,
         };
-        let resized = s.resize_to(handle, Point::new(400, 300), BOUNDS, false);
+        let resized = s.resize_to(handle, Point::new(400, 300), BOUNDS_RECT, false);
         assert_eq!(resized, Shape::Rect(Rect::new(100, 100, 300, 200)));
     }
 
@@ -1421,7 +1442,7 @@ mod tests {
             top: false,
             bottom: false,
         };
-        let resized = s.resize_to(handle, Point::new(50, 999), BOUNDS, false);
+        let resized = s.resize_to(handle, Point::new(50, 999), BOUNDS_RECT, false);
         assert_eq!(resized, Shape::Rect(Rect::new(50, 100, 250, 100)));
     }
 
@@ -1435,7 +1456,7 @@ mod tests {
             bottom: false,
         };
         // Dragging the left edge far past the right edge stops at MIN width.
-        let resized = s.resize_to(handle, Point::new(500, 150), BOUNDS, false);
+        let resized = s.resize_to(handle, Point::new(500, 150), BOUNDS_RECT, false);
         assert_eq!(resized, Shape::Rect(Rect::new(298, 100, 2, 100)));
     }
 
@@ -1448,7 +1469,7 @@ mod tests {
             top: false,
             bottom: false,
         };
-        let resized = s.resize_to(handle, Point::new(99_999, 150), BOUNDS, false);
+        let resized = s.resize_to(handle, Point::new(99_999, 150), BOUNDS_RECT, false);
         assert_eq!(
             resized,
             Shape::Rect(Rect::new(100, 100, BOUNDS.w - 1 - 100, 100))
@@ -1466,7 +1487,7 @@ mod tests {
             top: false,
             bottom: true,
         };
-        let resized = s.resize_to(corner, Point::new(400, 300), BOUNDS, true);
+        let resized = s.resize_to(corner, Point::new(400, 300), BOUNDS_RECT, true);
         assert_eq!(resized, Shape::Rect(Rect::new(100, 100, 400, 200)));
     }
 
@@ -1480,7 +1501,7 @@ mod tests {
             top: true,
             bottom: false,
         };
-        let resized = s.resize_to(corner, Point::new(0, 80), BOUNDS, true);
+        let resized = s.resize_to(corner, Point::new(0, 80), BOUNDS_RECT, true);
         let Shape::Rect(r) = resized else {
             panic!("still a rect")
         };
@@ -1500,7 +1521,12 @@ mod tests {
             top: false,
             bottom: true,
         };
-        let resized = s.resize_to(corner, Point::new(BOUNDS.w - 1, BOUNDS.h - 1), BOUNDS, true);
+        let resized = s.resize_to(
+            corner,
+            Point::new(BOUNDS_RECT.w - 1, BOUNDS_RECT.h - 1),
+            BOUNDS_RECT,
+            true,
+        );
         let Shape::Rect(r) = resized else {
             panic!("still a rect")
         };
@@ -1523,7 +1549,7 @@ mod tests {
             top: false,
             bottom: false,
         };
-        let resized = s.resize_to(edge, Point::new(500, 150), BOUNDS, true);
+        let resized = s.resize_to(edge, Point::new(500, 150), BOUNDS_RECT, true);
         assert_eq!(resized, Shape::Rect(Rect::new(100, 50, 400, 200)));
     }
 
@@ -1538,7 +1564,7 @@ mod tests {
             top: false,
             bottom: false,
         };
-        let resized = s.resize_to(edge, Point::new(500, 60), BOUNDS, true);
+        let resized = s.resize_to(edge, Point::new(500, 60), BOUNDS_RECT, true);
         let Shape::Rect(r) = resized else {
             panic!("still a rect")
         };
@@ -1556,13 +1582,13 @@ mod tests {
         let unlocked = s.resize_to(
             ResizeHandle::CircleRadius,
             Point::new(100, 180),
-            BOUNDS,
+            BOUNDS_RECT,
             false,
         );
         let locked = s.resize_to(
             ResizeHandle::CircleRadius,
             Point::new(100, 180),
-            BOUNDS,
+            BOUNDS_RECT,
             true,
         );
         assert_eq!(unlocked, locked);
@@ -1577,7 +1603,10 @@ mod tests {
             top: false,
             bottom: false,
         };
-        assert_eq!(s.resize_to(handle, Point::new(50, 50), BOUNDS, false), s);
+        assert_eq!(
+            s.resize_to(handle, Point::new(50, 50), BOUNDS_RECT, false),
+            s
+        );
     }
 
     #[test]
@@ -1643,7 +1672,7 @@ mod tests {
         };
         // Grab the right edge of the bbox (x = 70) and pull to x = 90.
         let handle = e.resize_grab(Point::new(70, 40), 2).expect("edge grab");
-        let resized = e.resize_to(handle, Point::new(90, 40), BOUNDS, false);
+        let resized = e.resize_to(handle, Point::new(90, 40), BOUNDS_RECT, false);
         assert_eq!(
             resized,
             Shape::Ellipse {
@@ -1752,7 +1781,7 @@ mod tests {
         assert_eq!(moved.bbox(), Rect::new(15, 5, 20, 20));
         // Bbox-edge resize scales every vertex.
         let handle = square.resize_grab(Point::new(30, 20), 2).expect("edge");
-        let grown = square.resize_to(handle, Point::new(50, 20), BOUNDS, false);
+        let grown = square.resize_to(handle, Point::new(50, 20), BOUNDS_RECT, false);
         assert_eq!(grown.bbox(), Rect::new(10, 10, 40, 20));
         // Rotation bakes into the vertices.
         let turned = square.with_rotation_baked(90);
@@ -1850,7 +1879,7 @@ mod tests {
         assert_eq!(tri.bbox(), Rect::new(100, 100, 200, 100));
         // Dragged far off-screen: the bbox pins to the corner and all three
         // vertices translate together.
-        let moved = tri.clamp_move(Point::new(0, 0), Point::new(-500, -500), BOUNDS);
+        let moved = tri.clamp_move(Point::new(0, 0), Point::new(-500, -500), BOUNDS_RECT);
         assert_eq!(moved.bbox(), Rect::new(0, 0, 200, 100));
         assert_eq!(
             moved,
@@ -1882,7 +1911,7 @@ mod tests {
             top: false,
             bottom: true,
         };
-        let resized = tri.resize_to(handle, Point::new(500, 300), BOUNDS, false);
+        let resized = tri.resize_to(handle, Point::new(500, 300), BOUNDS_RECT, false);
         assert_eq!(
             resized,
             Shape::Triangle {
@@ -1972,7 +2001,7 @@ mod tests {
             top: false,
             bottom: false,
         };
-        let Shape::Rect(r) = s.resize_to(handle, Point::new(0, 50), BOUNDS, false) else {
+        let Shape::Rect(r) = s.resize_to(handle, Point::new(0, 50), BOUNDS_RECT, false) else {
             panic!("still a rect")
         };
         assert!(r.x >= 0, "escaped left: {r:?}");
@@ -1984,8 +2013,12 @@ mod tests {
             top: false,
             bottom: false,
         };
-        let Shape::Rect(r) = s.resize_to(handle, Point::new(BOUNDS.w - 1, 50), BOUNDS, false)
-        else {
+        let Shape::Rect(r) = s.resize_to(
+            handle,
+            Point::new(BOUNDS_RECT.w - 1, 50),
+            BOUNDS_RECT,
+            false,
+        ) else {
             panic!("still a rect")
         };
         assert!(r.x + r.w <= BOUNDS.w, "escaped right: {r:?}");
@@ -2003,7 +2036,8 @@ mod tests {
             top: false,
             bottom: false,
         };
-        let Shape::Rect(r) = s.resize_to_rotated(45, handle, Point::new(1900, 1000), BOUNDS, false)
+        let Shape::Rect(r) =
+            s.resize_to_rotated(45, handle, Point::new(1900, 1000), BOUNDS_RECT, false)
         else {
             panic!("still a rect")
         };
@@ -2023,7 +2057,7 @@ mod tests {
             top: false,
             bottom: false,
         };
-        let Shape::Rect(r) = s.resize_to(handle, Point::new(120, 10), BOUNDS, false) else {
+        let Shape::Rect(r) = s.resize_to(handle, Point::new(120, 10), BOUNDS_RECT, false) else {
             panic!("still a rect")
         };
         assert_eq!(r.x, -90, "shape teleported");
@@ -2042,7 +2076,7 @@ mod tests {
             top: false,
             bottom: false,
         };
-        let r45 = s.resize_to_rotated(45, handle, Point::new(99_999, 99_999), BOUNDS, false);
+        let r45 = s.resize_to_rotated(45, handle, Point::new(99_999, 99_999), BOUNDS_RECT, false);
         // The local resize saw a finite, in-bounds visual point.
         assert_ne!(r45, s);
     }
@@ -2178,7 +2212,12 @@ mod tests {
         let bounds = Size::new(200, 200);
         // Dragged far past the corner: the rotated AABB, not the unrotated
         // rect, is what must stay inside.
-        let moved = rect.clamp_move_rotated(45, Point::new(0, 0), Point::new(500, 500), bounds);
+        let moved = rect.clamp_move_rotated(
+            45,
+            Point::new(0, 0),
+            Point::new(500, 500),
+            Rect::new(0, 0, bounds.w, bounds.h),
+        );
         let bb = moved.rotated_bbox(45);
         assert!(bb.x >= 0 && bb.y >= 0, "{bb:?}");
         assert!(bb.x + bb.w <= bounds.w, "{bb:?}");
@@ -2226,7 +2265,7 @@ mod tests {
                 bottom: false,
             },
             Point::new(30, 0),
-            Size::new(300, 300),
+            Rect::new(0, 0, 300, 300),
             true,
         );
         let bb = resized.bbox();

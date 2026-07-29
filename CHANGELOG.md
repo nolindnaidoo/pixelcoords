@@ -13,6 +13,12 @@ core.
 
 ### `--target` now means what its name says
 
+Dragging, resizing, and drawing all obey the same rule: **the drawable
+region is the window, not the monitor.** Grab an existing selection and
+drag it, or grab a resize handle — the shape stops at the window edge
+now instead of the monitor edge. Under the old build, moving a valid
+selection outside the window silently produced an invalid one on save.
+
 Yesterday: `--target` picked a monitor and *tagged* selections inside a
 window with `window_px`, while letting you draw anywhere on the monitor.
 Marks outside the window still got a `window_px` field — with negative
@@ -39,9 +45,12 @@ no longer referenced by the session — safe to remove.
 ### Library API
 
 `pixelcoords_core::geometry::Shape::compute_preview` signature changed:
-`bounds: Size` → `region: Rect`. Anyone consuming the crate needs to
-update the call. Passing `Rect::new(0, 0, size.w, size.h)` restores the
-previous behavior.
+`bounds: Size` → `region: Rect`. Same change to `Shape::clamp_move`,
+`Shape::resize_to`, `Shape::clamp_move_rotated`, and
+`Shape::resize_to_rotated` — every method that used to accept a `Size`
+now takes a `Rect`, because the drawable region is not always the whole
+frame. Passing `Rect::new(0, 0, size.w, size.h)` restores the previous
+behavior at each call site.
 
 `pixelcoords_core::session::restore_selections` now returns
 `(Vec<Selection>, Vec<String>)` — the second element is the labels of

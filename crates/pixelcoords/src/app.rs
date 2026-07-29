@@ -600,7 +600,7 @@ impl App {
                     rot,
                     grab_offset,
                     self.cursor,
-                    self.frames[frame].size,
+                    self.frames[frame].draw_rect(),
                 );
                 self.selections.set_shape_live(index, moved);
                 self.redraw_frame(frame);
@@ -620,7 +620,7 @@ impl App {
                     rot,
                     handle,
                     self.cursor,
-                    self.frames[frame].size,
+                    self.frames[frame].draw_rect(),
                     self.shift_down,
                 );
                 self.selections.set_shape_live(index, resized);
@@ -849,8 +849,13 @@ impl App {
             self.mode = Mode::Idle;
             return;
         };
-        let resized =
-            original.resize_to_rotated(rot, handle, self.cursor, self.frames[frame].size, shift);
+        let resized = original.resize_to_rotated(
+            rot,
+            handle,
+            self.cursor,
+            self.frames[frame].draw_rect(),
+            shift,
+        );
         self.selections.set_shape_live(index, resized);
         self.redraw_frame(frame);
     }

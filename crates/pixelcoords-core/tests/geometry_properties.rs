@@ -73,7 +73,7 @@ proptest! {
             (shape_within(bb), point_within(bb), point_within(bb))
         }),
     ) {
-        let moved = shape.clamp_move(grab, cursor, b);
+        let moved = shape.clamp_move(grab, cursor, Rect::new(0, 0, b.w, b.h));
         let bb = moved.bbox();
         // A shape larger than the bounds cannot fit; it is pinned at the
         // origin instead, which is the documented behaviour.
@@ -110,11 +110,12 @@ proptest! {
         prop_assume!(left || right || top || bottom);
         let shape = Shape::Rect(Rect::new(rx, ry, rw, rh));
         let handle = ResizeHandle::RectEdges { left, right, top, bottom };
+        let bounds_rect = Rect::new(0, 0, b.w, b.h);
         let resized = shape.resize_to_rotated(
             deg,
             handle,
             Point::new(cursor.0, cursor.1),
-            b,
+            bounds_rect,
             keep_aspect,
         );
         let bb = resized.bbox();
