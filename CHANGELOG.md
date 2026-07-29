@@ -21,6 +21,14 @@ the schema and CLI are declared stable.
   contents alone, matching what the system's own `screencapture` does.
   Windows and Linux were already pointer-free.
 
+  Found by building [pixelactions](https://github.com/nolindnaidoo/pixelactions),
+  the executor half of this loop, which parks the pointer on whatever it
+  just clicked and then asks `find` to re-locate that same region — the
+  one workload guaranteed to hit this. Nothing here changed to accommodate
+  that tool; the capture was simply wrong, and a second consumer made it
+  obvious. pixelactions requires this version and refuses to run against
+  anything older.
+
 ## 0.1.1
 
 - **README links work on crates.io now.** crates.io resolves a README's
