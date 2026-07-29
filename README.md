@@ -112,6 +112,28 @@ for a pixel loupe, `Esc` backs out / quits. Full table in
 Multi-monitor and mixed-DPI layouts are exercised by tests but not yet
 verified on real hardware. This table is kept honest — claims match runs.
 
+## Acting on what you marked
+
+pixelcoords answers *where is this thing, exactly*. It deliberately stops
+there — it never moves your mouse or types for you.
+
+**[pixelactions](https://github.com/nolindnaidoo/pixelactions)** is the
+other half of that loop: it reads a session, performs the interaction —
+click, type, chord, drag, scroll — and confirms it landed, refusing to act
+on any region it cannot still find unambiguously.
+
+```bash
+pixelactions run --session ~/captures/checkout \
+  click:email type:"a@b.com" click:submit wait:confirmed --yes
+```
+
+Driven from a chained command, a reviewable flow file, or a line protocol
+any language can speak. Its logic layer is
+[pixelactions-core](https://github.com/nolindnaidoo/pixelactions), the way
+[pixelcoords-core](https://crates.io/crates/pixelcoords-core) is this
+tool's. Separate binary, separate repository, one-way dependency: this
+project does not know it exists.
+
 ## Non-goals
 
 Knowing what a tool is means knowing what it isn't. These are settled:
@@ -125,6 +147,9 @@ Knowing what a tool is means knowing what it isn't. These are settled:
 - **Recording / GIF capture** — the product is the frozen instant, not
   the timeline; ShareX exists.
 - **Cloud upload, sharing, accounts** — offline by design, permanently.
+- **Performing the interaction** — clicking and typing is a different
+  threat model and a different tool; see
+  [pixelactions](https://github.com/nolindnaidoo/pixelactions) above.
 
 ## Documentation
 
@@ -136,6 +161,7 @@ Knowing what a tool is means knowing what it isn't. These are settled:
 - [docs/DEVELOPMENT.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/DEVELOPMENT.md) — building from source, CI gates, tests, releases
 - [CHANGELOG.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/CHANGELOG.md) — what changed and why
 - [CONTRIBUTING.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/CONTRIBUTING.md) — bug reports and pull requests
+- [pixelactions](https://github.com/nolindnaidoo/pixelactions) — the executor half: act on a session, and confirm it landed
 
 ## License
 
