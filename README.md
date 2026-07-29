@@ -6,9 +6,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nolindnaidoo/pixelcoords/actions/workflows/ci.yml">
-    <img src="https://github.com/nolindnaidoo/pixelcoords/actions/workflows/ci.yml/badge.svg" alt="Build Status" />
-  </a>
   <a href="https://crates.io/crates/pixelcoords">
     <img src="https://img.shields.io/crates/v/pixelcoords.svg" alt="crates.io" />
   </a>
@@ -16,6 +13,9 @@
     <img src="https://img.shields.io/docsrs/pixelcoords-core.svg" alt="docs.rs" />
   </a>
   <img src="https://img.shields.io/badge/rustc-1.88+-93450a.svg" alt="MSRV: Rust 1.88+" />
+  <a href="https://github.com/nolindnaidoo/pixelcoords/actions/workflows/ci.yml">
+    <img src="https://github.com/nolindnaidoo/pixelcoords/actions/workflows/ci.yml/badge.svg" alt="Build Status" />
+  </a>
   <a href="https://github.com/nolindnaidoo/pixelcoords/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" />
   </a>
