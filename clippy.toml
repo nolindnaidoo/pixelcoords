@@ -1,0 +1,8 @@
+# Proper nouns that clippy's `doc_markdown` lint mistakes for code
+# identifiers because they are CamelCase. The README is included as crate
+# documentation (`#![doc = include_str!]`), so brand names in it are
+# linted like doc comments — and backticking a typeface name would render
+# it as code on crates.io, which is worse than the warning.
+#
+# `..` extends clippy's own default list rather than replacing it.
+doc-valid-idents = ["JetBrains", ".."]
