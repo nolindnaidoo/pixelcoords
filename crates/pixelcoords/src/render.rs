@@ -78,6 +78,12 @@ pub struct FrameState<'a> {
 /// `buffer`), already converted to `0RGB`.
 pub fn compose(buffer: &mut [u32], size: Size, background: &[u32], state: &FrameState) {
     buffer.copy_from_slice(background);
+    if let Some(bounds) = state.target {
+        // Dim pixels outside the drawable region so the boundary is
+        // obvious. Marks made outside are refused, so the reader should
+        // see plainly which pixels are in play.
+        shade_outside(buffer, size, bounds);
+    }
     let mut canvas = Canvas::new(buffer, size.w, size.h);
 
     if let Some(bounds) = state.target {
@@ -133,6 +139,36 @@ pub fn compose(buffer: &mut [u32], size: Size, background: &[u32], state: &Frame
     draw_cursor_readout(&mut canvas, size, state);
     draw_hud(&mut canvas, size, state);
     draw_loupe(&mut canvas, background, size, state);
+}
+
+/// Darken every pixel of `buffer` that lies outside `region`, in place.
+///
+/// The buffer is 0RGB (four bytes per pixel, top byte unused). Scaling
+/// each byte by an integer numerator and dividing by 256 keeps the math
+/// in integers and avoids branching.
+fn shade_outside(buffer: &mut [u32], size: Size, region: Rect) {
+    // ~0.35 · 256 — dark enough to read as "out of bounds" while leaving
+    // enough contrast that the reader can still see what is there.
+    const NUM: u32 = 90;
+    let width = size.w as usize;
+    let height = size.h as usize;
+    let left = region.x.max(0) as usize;
+    let top = region.y.max(0) as usize;
+    let right = ((region.x + region.w).max(0) as usize).min(width);
+    let bottom = ((region.y + region.h).max(0) as usize).min(height);
+    for row in 0..height {
+        for col in 0..width {
+            if col >= left && col < right && row >= top && row < bottom {
+                continue;
+            }
+            let index = row * width + col;
+            let pixel = buffer[index];
+            let red = ((pixel >> 16) & 0xff) * NUM / 256;
+            let green = ((pixel >> 8) & 0xff) * NUM / 256;
+            let blue = (pixel & 0xff) * NUM / 256;
+            buffer[index] = (red << 16) | (green << 8) | blue;
+        }
+    }
 }
 
 /// The magnifier: a bordered box beside the cursor showing the frozen

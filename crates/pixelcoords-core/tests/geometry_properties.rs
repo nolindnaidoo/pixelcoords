@@ -73,7 +73,7 @@ proptest! {
             (shape_within(bb), point_within(bb), point_within(bb))
         }),
     ) {
-        let moved = shape.clamp_move(grab, cursor, b);
+        let moved = shape.clamp_move(grab, cursor, Rect::new(0, 0, b.w, b.h));
         let bb = moved.bbox();
         // A shape larger than the bounds cannot fit; it is pinned at the
         // origin instead, which is the documented behaviour.
@@ -90,7 +90,7 @@ proptest! {
         tool in prop_oneof![Just(ToolKind::Rect), Just(ToolKind::Circle), Just(ToolKind::Triangle)],
         (sx, sy, ex, ey) in (-500i32..900, -500i32..900, -500i32..900, -500i32..900),
     ) {
-        let preview = Shape::compute_preview(tool, Point::new(sx, sy), Point::new(ex, ey), b, false);
+        let preview = Shape::compute_preview(tool, Point::new(sx, sy), Point::new(ex, ey), Rect::new(0, 0, b.w, b.h), false);
         let Some(shape) = preview else { return Ok(()) };
         let bb = shape.bbox();
         prop_assert!(bb.w > 0 && bb.h > 0, "degenerate {bb:?}");
@@ -110,11 +110,12 @@ proptest! {
         prop_assume!(left || right || top || bottom);
         let shape = Shape::Rect(Rect::new(rx, ry, rw, rh));
         let handle = ResizeHandle::RectEdges { left, right, top, bottom };
+        let bounds_rect = Rect::new(0, 0, b.w, b.h);
         let resized = shape.resize_to_rotated(
             deg,
             handle,
             Point::new(cursor.0, cursor.1),
-            b,
+            bounds_rect,
             keep_aspect,
         );
         let bb = resized.bbox();
