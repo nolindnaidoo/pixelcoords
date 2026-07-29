@@ -111,6 +111,20 @@ Coordinates section.
 
 ## Releases
 
+Before every publish, walk this list — the ones with easy misses first:
+
+1. **Update the install snippet in `crates/pixelcoords-core/README.md`.**
+   A pre-1.0 caret pin like `= "0.1"` resolves to the newest 0.1.x, not
+   0.2.x — so a reader copy-pasting from crates.io lands on the old API.
+   Bump the string to the current minor before every minor cut.
+2. Update the workspace version and the core dep pin in
+   `crates/pixelcoords/Cargo.toml`.
+3. Write the CHANGELOG entry.
+4. Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+   -- -D warnings`, and `cargo test --workspace`.
+5. Dry-run: `cargo publish -p pixelcoords-core --dry-run`.
+
+
 Versioning policy (also stated in [CHANGELOG.md](../CHANGELOG.md)):
 pre-1.0, **minor** for features and any CLI/schema break, **patch** for
 fixes; 1.0.0 when schema and CLI are declared stable.
