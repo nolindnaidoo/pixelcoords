@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org). Pre-1.0 policy:
 CLI or the session schema; **patch** (0.x.y) for fixes. 1.0.0 comes when
 the schema and CLI are declared stable.
 
+## 0.1.2
+
+- **Captures no longer include the mouse pointer (macOS).** The pointer is
+  drawn on top of the screen, not part of it, and compositing it into a
+  capture corrupts exactly the thing this tool exists to do. It poisoned
+  saved crops — mark a region while the pointer is over it and the crop has
+  a pointer baked in — and it broke `find`, because whatever moved the
+  pointer usually left it on the region about to be re-located. Measured
+  cost on a low-detail region: **0.17 of match score**, enough to drop a
+  perfect match below the 0.9 floor, while a busy region absorbed it
+  entirely — so the symptom looked like flakiness rather than a bug.
+  macOS now captures through `CGDisplayCreateImage`, which returns display
+  contents alone, matching what the system's own `screencapture` does.
+  Windows and Linux were already pointer-free.
+
 ## 0.1.1
 
 - **README links work on crates.io now.** crates.io resolves a README's
