@@ -15,7 +15,7 @@ body:
     attributes:
       label: pixelcoords version
       description: The output of `pixelcoords --version`.
-      placeholder: pixelcoords 0.1.0
+      placeholder: pixelcoords 0.2.1
     validations:
       required: true
   - type: textarea
