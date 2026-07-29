@@ -35,7 +35,7 @@ pixelcoords-captures/20260727-113542-097/
 ```json
 {
   "schema": 1,
-  "app": { "name": "pixelcoords", "version": "0.1.0" },
+  "app": { "name": "pixelcoords", "version": "0.2.1" },
   "created_utc": "2026-07-27T11:35:42Z",
   "monitors": [
     {
@@ -93,8 +93,10 @@ grid, which is what automation tools and screenshots use.
   working across monitors.
 - `window_px` — present in `--target` sessions: `px` relative to the
   target window's top-left at freeze time. It stays valid when the window
-  moves between sessions. Negative values mean the mark was outside the
-  window.
+  moves between sessions. Always non-negative and within the window's
+  size — since 0.2.0, marking outside the window is refused at draw time.
+  Older sessions may contain out-of-window marks with negative
+  coordinates; `pixelcoords resume` drops them and reports the labels.
 - Logical points (for APIs that want them) are `px / scale` using the
   monitor's `scale`.
 

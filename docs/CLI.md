@@ -21,7 +21,7 @@ Freezes the screen and opens the marking overlay.
 | Flag | Meaning |
 |------|---------|
 | `--monitor <N>` | Freeze only this monitor (default: all) |
-| `--target <TITLE>` | Attach to a window: match its title (exact, prefix, substring), then app name; adds `window_px` coordinates |
+| `--target <TITLE>` | Attach to a window: match its title (exact, prefix, substring), then app name. Locks the drawable region to the window (see below) and records `window_px` coordinates on every mark |
 | `--pick` | Linux: freeze one window chosen in the system picker — the Wayland answer to `--target` |
 | `--out <DIR>` | Output directory (default: `Downloads/pixelcoords-captures/<timestamp>`) |
 | `--name <TEXT>` | Friendly session name for the resume picker |
