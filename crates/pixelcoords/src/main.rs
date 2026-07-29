@@ -155,15 +155,38 @@ fn run_resume(args: &cli::Cli, path: &std::path::Path, out: Option<PathBuf>) -> 
             record.size_px.w,
             record.size_px.h
         );
-        frames.push(app::MonitorFrame::new(monitor_from_record(record), img));
+        let mut frame = app::MonitorFrame::new(monitor_from_record(record), img);
+        // Resumed target sessions carry the same "drawable region is the
+        // window" constraint their originals did.
+        if let Some(target) = &session.target
+            && target.monitor == frame.info.index
+        {
+            frame = frame.with_draw_rect(pixelcoords_core::geometry::Rect::new(
+                target.origin_px.x,
+                target.origin_px.y,
+                target.size_px.w,
+                target.size_px.h,
+            ));
+        }
+        frames.push(frame);
     }
 
-    let selections = pixelcoords_core::session::restore_selections(&session);
+    let (selections, dropped) = pixelcoords_core::session::restore_selections(&session);
+    if !dropped.is_empty() {
+        eprintln!(
+            "dropped {} selection(s) that landed outside the target window: {}",
+            dropped.len(),
+            dropped.join(", ")
+        );
+    }
     let out_dir = out.unwrap_or_else(|| dir.clone());
     let in_place = out_dir == dir;
+    // Drop the crops that belonged to the filtered selections so the
+    // resave path does not try to re-use them.
     let previous: Vec<crate::save::WrittenCrop> = session
         .selections
         .iter()
+        .filter(|record| !dropped.contains(&record.label))
         .map(|record| crate::save::WrittenCrop {
             name: record.crop.clone(),
             shape: record.px.clone(),
@@ -903,7 +926,21 @@ fn run_overlay(args: &cli::Cli) -> Result<()> {
             img.width(),
             img.height()
         );
-        frames.push(app::MonitorFrame::new(monitor, img));
+        let mut frame = app::MonitorFrame::new(monitor, img);
+        // In `--target` mode the drawable region is the window's rect on
+        // its monitor, not the whole monitor. That both constrains new
+        // marks and gives the overlay a boundary to dim around.
+        if let Some(record) = &target_record
+            && record.monitor == frame.info.index
+        {
+            frame = frame.with_draw_rect(pixelcoords_core::geometry::Rect::new(
+                record.origin_px.x,
+                record.origin_px.y,
+                record.size_px.w,
+                record.size_px.h,
+            ));
+        }
+        frames.push(frame);
     }
 
     let out_dir = args.out.clone().unwrap_or_else(default_out_dir);
@@ -1686,7 +1723,7 @@ mod tests {
         // then resave unchanged. Sentinel bytes must survive: the resumed
         // session behaves as if it never closed.
         let session = super::load_session(&dir).unwrap();
-        let restored = pixelcoords_core::session::restore_selections(&session);
+        let (restored, _dropped) = pixelcoords_core::session::restore_selections(&session);
         let previous: Vec<crate::save::WrittenCrop> = session
             .selections
             .iter()

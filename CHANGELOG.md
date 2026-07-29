@@ -6,6 +6,49 @@ follow [Semantic Versioning](https://semver.org). Pre-1.0 policy:
 CLI or the session schema; **patch** (0.x.y) for fixes. 1.0.0 comes when
 the schema and CLI are declared stable.
 
+## 0.2.0
+
+**Breaking.** `--target` mode changed shape and one public API changed in
+core.
+
+### `--target` now means what its name says
+
+Yesterday: `--target` picked a monitor and *tagged* selections inside a
+window with `window_px`, while letting you draw anywhere on the monitor.
+Marks outside the window still got a `window_px` field — with negative
+coordinates — because the code translated everything unconditionally.
+
+Today: `--target` **locks the drawable region to the window's rect**.
+
+- Pixels outside the window are dimmed in the overlay, so the boundary
+  is visible.
+- Clicks and drags outside the window do nothing — no shape starts. The
+  cursor is `NotAllowed` there, not the crosshair, so it does not lie.
+- Existing selections dragged inside the window still work; nothing
+  escapes.
+- The old behavior was misleading enough that the fix is a break, not a
+  toggle. There is no flag to restore it.
+
+### Sessions from older builds
+
+A resumed session that predates this change may contain selections drawn
+outside the window on the monitor. `restore_selections` now drops them
+and reports the labels on stderr. The dropped crops stay on disk but are
+no longer referenced by the session — safe to remove.
+
+### Library API
+
+`pixelcoords_core::geometry::Shape::compute_preview` signature changed:
+`bounds: Size` → `region: Rect`. Anyone consuming the crate needs to
+update the call. Passing `Rect::new(0, 0, size.w, size.h)` restores the
+previous behavior.
+
+`pixelcoords_core::session::restore_selections` now returns
+`(Vec<Selection>, Vec<String>)` — the second element is the labels of
+selections dropped because they lay outside the window. If you were
+using it before, destructure the tuple; the empty vec is the "nothing
+was dropped" case.
+
 ## 0.1.2
 
 - **Captures no longer include the mouse pointer (macOS).** The pointer is

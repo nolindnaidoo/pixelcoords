@@ -185,16 +185,53 @@ impl SessionFile {
 /// reclaim their `rot_deg` metadata, triangles keep rotation baked in
 /// their vertices (their records never carry `rot_deg`), and circles are
 /// rotation-free. Feed the result to `SelectionSet::seed`.
-pub fn restore_selections(file: &SessionFile) -> Vec<Selection> {
-    file.selections
-        .iter()
-        .map(|record| Selection {
+///
+/// In a target session, selections whose shape falls outside the window's
+/// rect are **dropped**. Older builds recorded whatever the user marked
+/// on the whole monitor, including junk outside the window, and their
+/// stored `window_px` came out with negative coordinates. This build
+/// refuses to let a user act on those, so a resumed session should not
+/// bring them back. The dropped labels are returned so the caller can
+/// tell the user what happened.
+pub fn restore_selections(file: &SessionFile) -> (Vec<Selection>, Vec<String>) {
+    let target_rect = file.target.as_ref().map(|t| {
+        (
+            t.monitor,
+            crate::geometry::Rect::new(0, 0, t.size_px.w, t.size_px.h),
+        )
+    });
+    let mut kept = Vec::with_capacity(file.selections.len());
+    let mut dropped = Vec::new();
+    for record in &file.selections {
+        // Compare against `window_px` (already translated to window-local)
+        // rather than reconstructing coordinates from `px`; the two must
+        // agree for a valid record, and window_px is the primary frame in
+        // a target session.
+        if let Some((monitor, rect)) = target_rect
+            && record.monitor == monitor
+        {
+            let Some(shape) = &record.window_px else {
+                dropped.push(record.label.clone());
+                continue;
+            };
+            let bbox = shape.bbox();
+            let inside = bbox.x >= rect.x
+                && bbox.y >= rect.y
+                && bbox.x + bbox.w <= rect.x + rect.w
+                && bbox.y + bbox.h <= rect.y + rect.h;
+            if !inside {
+                dropped.push(record.label.clone());
+                continue;
+            }
+        }
+        kept.push(Selection {
             shape: record.px.clone(),
             label: record.label.clone(),
             monitor: record.monitor,
             rot_deg: record.rot_deg.unwrap_or(0),
-        })
-        .collect()
+        });
+    }
+    (kept, dropped)
 }
 
 #[cfg(test)]
@@ -397,7 +434,7 @@ mod tests {
             &crops,
             None,
         );
-        let restored = restore_selections(&first);
+        let (restored, _) = restore_selections(&first);
         let second = SessionFile::build("test", "t".into(), monitors, &restored, &crops, None);
         assert_eq!(first.selections, second.selections);
     }

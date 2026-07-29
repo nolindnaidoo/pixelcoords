@@ -38,6 +38,12 @@ pub struct MonitorFrame {
     pub rgba: RgbaImage,
     background: Vec<u32>,
     size: Size,
+    /// The rectangle within this frame that a user may draw in. In desktop
+    /// mode this is the whole frame; in `--target` mode it is the target
+    /// window's rect on this monitor, and drawing outside it is refused.
+    /// The overlay dims pixels outside this rect so the drawable area is
+    /// obvious.
+    draw_rect: pixelcoords_core::geometry::Rect,
     ui_scale: i32,
 }
 
@@ -46,13 +52,32 @@ impl MonitorFrame {
         let size = Size::new(rgba.width() as i32, rgba.height() as i32);
         let background = rgba_to_0rgb(&rgba);
         let ui_scale = (info.scale.round() as i32).max(1);
+        let draw_rect = pixelcoords_core::geometry::Rect::new(0, 0, size.w, size.h);
         Self {
             info,
             rgba,
             background,
             size,
+            draw_rect,
             ui_scale,
         }
+    }
+
+    /// Restrict drawing to `rect` within this frame. Clamped to the frame
+    /// bounds so a bad target rect cannot escape the capture.
+    pub fn with_draw_rect(mut self, rect: pixelcoords_core::geometry::Rect) -> Self {
+        let x = rect.x.max(0).min(self.size.w);
+        let y = rect.y.max(0).min(self.size.h);
+        let w = (rect.x + rect.w).min(self.size.w).max(x) - x;
+        let h = (rect.y + rect.h).min(self.size.h).max(y) - y;
+        if w > 0 && h > 0 {
+            self.draw_rect = pixelcoords_core::geometry::Rect::new(x, y, w, h);
+        }
+        self
+    }
+
+    pub fn draw_rect(&self) -> pixelcoords_core::geometry::Rect {
+        self.draw_rect
     }
 }
 
@@ -294,11 +319,21 @@ impl App {
         match self.tool {
             // Center-to-vertex drag: one gesture sizes and orients the
             // N-gon at once.
-            ToolKind::Polygon => Some(pixelcoords_core::geometry::regular_polygon(
-                *start,
-                self.cursor,
-                self.polygon_sides,
-            )),
+            ToolKind::Polygon => {
+                // Clamp the vertex direction into the drawable region so
+                // dragging past the window edge does not extend the
+                // polygon outside it.
+                let region = self.frames[frame_idx].draw_rect;
+                let vertex = Point::new(
+                    self.cursor.x.clamp(region.x, region.x + region.w - 1),
+                    self.cursor.y.clamp(region.y, region.y + region.h - 1),
+                );
+                Some(pixelcoords_core::geometry::regular_polygon(
+                    *start,
+                    vertex,
+                    self.polygon_sides,
+                ))
+            }
             // The stroke so far, implicitly closed.
             ToolKind::Freehand => (path.len() >= 3).then(|| Shape::Poly {
                 points: path.clone(),
@@ -307,7 +342,7 @@ impl App {
                 self.tool,
                 *start,
                 self.cursor,
-                self.frames[frame_idx].size,
+                self.frames[frame_idx].draw_rect,
                 self.shift_down,
             ),
         }
@@ -443,6 +478,18 @@ impl App {
                 };
             }
             None => {
+                // Only start drawing when the click lands inside the
+                // frame's drawable region. In desktop mode this is the
+                // whole frame; in `--target` mode it is the target window
+                // — and a click on the surrounding dead space should
+                // simply do nothing rather than start a shape that would
+                // be refused at save time.
+                if !self.frames[self.cursor_frame]
+                    .draw_rect
+                    .contains(self.cursor)
+                {
+                    return;
+                }
                 self.mode = Mode::Drawing {
                     frame: self.cursor_frame,
                     start: self.cursor,
@@ -526,6 +573,7 @@ impl App {
                 // The freehand stroke grows only on meaningful movement;
                 // 2px spacing keeps point counts sane before simplify.
                 if self.tool == ToolKind::Freehand
+                    && self.frames[frame].draw_rect.contains(self.cursor)
                     && path.last().is_none_or(|last| {
                         (self.cursor.x - last.x).abs() + (self.cursor.y - last.y).abs() >= 2
                     })
@@ -591,6 +639,16 @@ impl App {
                 resize_icon(handle, &self.selections.items()[index].shape, self.cursor)
             }
             Some((_, GrabKind::Move)) => CursorIcon::Move,
+            // Outside the drawable region a click would do nothing, so
+            // stop advertising "draw here" — a plain arrow tells the
+            // truth. The overlay already dims those pixels; the cursor
+            // has to match, or it reads as a bug.
+            None if !self.frames[self.cursor_frame]
+                .draw_rect()
+                .contains(self.cursor) =>
+            {
+                CursorIcon::NotAllowed
+            }
             None => CursorIcon::Crosshair,
         };
         if icon != self.cursor_icon {

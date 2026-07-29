@@ -90,7 +90,7 @@ proptest! {
         tool in prop_oneof![Just(ToolKind::Rect), Just(ToolKind::Circle), Just(ToolKind::Triangle)],
         (sx, sy, ex, ey) in (-500i32..900, -500i32..900, -500i32..900, -500i32..900),
     ) {
-        let preview = Shape::compute_preview(tool, Point::new(sx, sy), Point::new(ex, ey), b, false);
+        let preview = Shape::compute_preview(tool, Point::new(sx, sy), Point::new(ex, ey), Rect::new(0, 0, b.w, b.h), false);
         let Some(shape) = preview else { return Ok(()) };
         let bb = shape.bbox();
         prop_assert!(bb.w > 0 && bb.h > 0, "degenerate {bb:?}");

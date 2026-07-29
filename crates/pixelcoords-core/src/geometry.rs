@@ -145,11 +145,15 @@ impl Shape {
         tool: ToolKind,
         start: Point,
         current: Point,
-        bounds: Size,
+        region: Rect,
         lock: bool,
     ) -> Option<Self> {
-        let cx = current.x.clamp(0, bounds.w - 1);
-        let cy = current.y.clamp(0, bounds.h - 1);
+        // The drawable region is not always the whole frame. In `--target`
+        // mode it is the window's rect within the monitor, and `start` has
+        // already been rejected outside that region — so the preview only
+        // has to keep `current` from wandering out.
+        let cx = current.x.clamp(region.x, region.x + region.w - 1);
+        let cy = current.y.clamp(region.y, region.y + region.h - 1);
         match tool {
             ToolKind::Rect | ToolKind::Triangle | ToolKind::Ellipse => {
                 let x = start.x.min(cx);
@@ -1089,6 +1093,7 @@ mod tests {
     use super::*;
 
     const BOUNDS: Size = Size::new(1920, 1080);
+    const BOUNDS_RECT: Rect = Rect::new(0, 0, BOUNDS.w, BOUNDS.h);
 
     #[test]
     fn rect_preview_normalizes_inverted_drag() {
@@ -1096,7 +1101,7 @@ mod tests {
             ToolKind::Rect,
             Point::new(100, 200),
             Point::new(40, 50),
-            BOUNDS,
+            BOUNDS_RECT,
             false,
         );
         assert_eq!(s, Some(Shape::Rect(Rect::new(40, 50, 60, 150))));
@@ -1108,7 +1113,7 @@ mod tests {
             ToolKind::Rect,
             Point::new(1900, 1000),
             Point::new(5000, 5000),
-            BOUNDS,
+            BOUNDS_RECT,
             false,
         );
         assert_eq!(s, Some(Shape::Rect(Rect::new(1900, 1000, 19, 79))));
@@ -1121,7 +1126,7 @@ mod tests {
                 ToolKind::Rect,
                 Point::new(10, 10),
                 Point::new(10, 300),
-                BOUNDS,
+                BOUNDS_RECT,
                 false
             ),
             None
@@ -1131,7 +1136,7 @@ mod tests {
                 ToolKind::Rect,
                 Point::new(10, 10),
                 Point::new(10, 10),
-                BOUNDS,
+                BOUNDS_RECT,
                 false
             ),
             None
@@ -1144,7 +1149,7 @@ mod tests {
             ToolKind::Circle,
             Point::new(100, 100),
             Point::new(103, 104),
-            BOUNDS,
+            BOUNDS_RECT,
             false,
         );
         assert_eq!(
@@ -1164,7 +1169,7 @@ mod tests {
                 ToolKind::Circle,
                 Point::new(7, 7),
                 Point::new(7, 7),
-                BOUNDS,
+                BOUNDS_RECT,
                 false
             ),
             None
@@ -1581,7 +1586,7 @@ mod tests {
             ToolKind::Ellipse,
             Point::new(10, 10),
             Point::new(50, 30),
-            BOUNDS,
+            BOUNDS_RECT,
             false,
         );
         assert_eq!(
@@ -1597,7 +1602,7 @@ mod tests {
             ToolKind::Ellipse,
             Point::new(10, 10),
             Point::new(50, 30),
-            BOUNDS,
+            BOUNDS_RECT,
             true,
         );
         assert_eq!(
@@ -1799,7 +1804,7 @@ mod tests {
             ToolKind::Triangle,
             Point::new(100, 100),
             Point::new(300, 200),
-            BOUNDS,
+            BOUNDS_RECT,
             false,
         );
         assert_eq!(
