@@ -12,6 +12,10 @@
   <a href="https://crates.io/crates/pixelcoords">
     <img src="https://img.shields.io/crates/v/pixelcoords.svg" alt="crates.io" />
   </a>
+  <a href="https://docs.rs/pixelcoords-core">
+    <img src="https://img.shields.io/docsrs/pixelcoords-core.svg" alt="docs.rs" />
+  </a>
+  <img src="https://img.shields.io/badge/rustc-1.88+-93450a.svg" alt="MSRV: Rust 1.88+" />
   <a href="https://github.com/nolindnaidoo/pixelcoords/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" />
   </a>
