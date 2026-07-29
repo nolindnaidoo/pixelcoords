@@ -111,6 +111,29 @@ Flat over nested, guards over branches:
   tables from Windows and X11 runners; verify against those or against
   the platform's source before coding.
 
+## Captures exclude the mouse pointer
+
+A capture must contain screen *content* and nothing else. The pointer is
+drawn on top of the screen by the window server; it is not content, and
+treating it as content breaks both halves of this tool:
+
+- a crop saved while the pointer sat over the region has a pointer baked
+  into it, and then only matches when a pointer is in the same place;
+- `find` re-locates against a fresh capture, and whatever just moved the
+  pointer has usually left it on the very region being re-located.
+
+Measured on real hardware: the pointer costs about **0.17 of match score**
+on a low-detail region — enough to push a perfect match under the 0.9
+floor — and nothing at all on a busy one. That content-dependence is why
+it presents as flakiness instead of a bug, and why it must be fixed at the
+capture layer rather than compensated for downstream.
+
+Windows and Linux capture without it already. macOS goes through
+`mac::capture_display` (`CGDisplayCreateImage`) rather than the capture
+crate's `CGWindowListCreateImage` path, which composites the pointer in.
+**Do not route macOS monitor capture back through the crate's own
+`capture_image()`.**
+
 ## Data and schema
 
 - `session.json` carries `"schema": 1`. New fields are optional and

@@ -219,6 +219,19 @@ impl CaptureProvider for XcapCapture {
             .name()
             .with_context(|| format!("monitor {}: name", monitor.index))?;
         ensure_same_monitor(monitor.index, &monitor.name, &name)?;
+        // macOS captures through CoreGraphics directly, because the crate's
+        // path composites the mouse pointer into the image and a pointer is
+        // not screen content — see `mac::capture_display`.
+        #[cfg(target_os = "macos")]
+        let img = {
+            let display = m
+                .id()
+                .with_context(|| format!("monitor {}: display id", monitor.index))?;
+            crate::mac::capture_display(display).with_context(|| {
+                format!("capturing monitor {} ({})", monitor.index, monitor.name)
+            })?
+        };
+        #[cfg(not(target_os = "macos"))]
         let img = m
             .capture_image()
             .with_context(|| format!("capturing monitor {} ({})", monitor.index, monitor.name))?;
