@@ -5,6 +5,14 @@
 #   Windows: %APPDATA%\pixelcoords\config.toml
 # Every field is optional; these are the defaults.
 
+# Which monitors a launch with no --monitor flag freezes. "all" is the
+# default. Otherwise a query, or a list of them: an index, "primary", or
+# part of a display name (run `pixelcoords doctor` to see the names).
+# This is how a double-clicked binary — no terminal, no flags — expresses
+# a preference. A --monitor flag always overrides it.
+[capture]
+monitors = "all"           # or "primary", or ["DELL", "Built-in"]
+
 [style]
 preview_color = "#00A0FF"  # outline while dragging a shape out
 complete_color = "#00FF66" # outline of committed shapes

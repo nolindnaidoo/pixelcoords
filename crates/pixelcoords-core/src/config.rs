@@ -19,6 +19,11 @@ pub enum ConfigError {
     Thickness(u32),
     #[error(transparent)]
     Hotkey(#[from] HotkeyError),
+    #[error(
+        "[capture] monitors: {0} — expected \"all\", or a monitor query \
+         (an index, \"primary\", or part of a display name), or a list of them"
+    )]
+    Monitors(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -26,6 +31,26 @@ pub enum ConfigError {
 pub struct Config {
     pub style: StyleConfig,
     pub hotkeys: Vec<HotkeyEntry>,
+    pub capture: CaptureConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct CaptureConfig {
+    /// Which monitors a no-flag launch freezes. `None` (the table absent,
+    /// or the key absent) means all of them — the launch default, and the
+    /// product's thesis. This is the answer for a double-clicked binary,
+    /// which has no terminal to pass `--monitor` on.
+    pub monitors: Option<MonitorsSetting>,
+}
+
+/// `monitors = "primary"` and `monitors = ["DELL", "Built-in"]` are both
+/// natural to write, so both parse.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MonitorsSetting {
+    One(String),
+    Many(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +117,46 @@ impl Config {
             thickness: s.thickness as i32,
             fill: s.fill,
         })
+    }
+
+    /// The monitor queries a no-flag launch should use, or an empty vec
+    /// meaning all of them.
+    ///
+    /// Only the *shape* is checked here — this crate has no idea what is
+    /// plugged in. A query that names no attached display fails at launch
+    /// with the same message `--monitor` gives, which is the honest place
+    /// for it: the answer depends on the hardware, not the file. What is
+    /// rejected here is a value that could never mean anything on any
+    /// machine, because a silent default is the bug class this module
+    /// exists to avoid.
+    pub fn resolve_monitors(&self) -> Result<Vec<String>, ConfigError> {
+        let raw = match &self.capture.monitors {
+            None => return Ok(Vec::new()),
+            Some(MonitorsSetting::One(one)) => vec![one.clone()],
+            Some(MonitorsSetting::Many(many)) => {
+                if many.is_empty() {
+                    return Err(ConfigError::Monitors("the list is empty".into()));
+                }
+                many.clone()
+            }
+        };
+        // "all" is the launch default said out loud, and only means that on
+        // its own — in a list it would be a display name, which is a
+        // contradiction worth naming rather than resolving.
+        if raw.len() == 1 && raw[0].trim().eq_ignore_ascii_case("all") {
+            return Ok(Vec::new());
+        }
+        for query in &raw {
+            if query.trim().is_empty() {
+                return Err(ConfigError::Monitors("an entry is empty".into()));
+            }
+            if query.trim().eq_ignore_ascii_case("all") {
+                return Err(ConfigError::Monitors(
+                    "\"all\" cannot be combined with other monitors".into(),
+                ));
+            }
+        }
+        Ok(raw)
     }
 
     /// Defaults, then config-file entries, then `extra` (CLI `--bind`).
@@ -190,6 +255,61 @@ mod tests {
         for bad in ["", "#", "12345", "1234567", "GGGGGG", "#12 456"] {
             assert!(parse_hex_color(bad).is_err(), "{bad:?} should be rejected");
         }
+    }
+
+    fn capture(toml: &str) -> Result<Vec<String>, ConfigError> {
+        let cfg: Config = ::toml::from_str(toml).expect("parses");
+        cfg.resolve_monitors()
+    }
+
+    #[test]
+    fn no_capture_table_means_every_monitor() {
+        assert!(capture("").unwrap().is_empty());
+        assert!(capture("[capture]\n").unwrap().is_empty());
+    }
+
+    #[test]
+    fn all_is_the_launch_default_said_out_loud() {
+        assert!(
+            capture("[capture]\nmonitors = \"all\"\n")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            capture("[capture]\nmonitors = \"ALL\"\n")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_single_query_and_a_list_both_parse() {
+        assert_eq!(
+            capture("[capture]\nmonitors = \"primary\"\n").unwrap(),
+            vec!["primary".to_string()]
+        );
+        assert_eq!(
+            capture("[capture]\nmonitors = [\"DELL\", \"Built-in\"]\n").unwrap(),
+            vec!["DELL".to_string(), "Built-in".to_string()]
+        );
+    }
+
+    #[test]
+    fn empty_and_contradictory_values_are_errors_not_silent_defaults() {
+        // The bug class this module exists to avoid: a value that means
+        // nothing quietly becoming "freeze everything".
+        assert!(capture("[capture]\nmonitors = \"\"\n").is_err());
+        assert!(capture("[capture]\nmonitors = \"   \"\n").is_err());
+        assert!(capture("[capture]\nmonitors = []\n").is_err());
+        assert!(capture("[capture]\nmonitors = [\"DELL\", \"\"]\n").is_err());
+        // "all" is only the default on its own; alongside a name it is a
+        // contradiction rather than a display.
+        assert!(capture("[capture]\nmonitors = [\"all\", \"DELL\"]\n").is_err());
+    }
+
+    #[test]
+    fn an_unknown_capture_key_is_refused_like_every_other_table() {
+        assert!(::toml::from_str::<Config>("[capture]\nmonitor = \"primary\"\n").is_err());
     }
 
     #[test]
