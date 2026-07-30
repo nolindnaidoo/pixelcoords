@@ -81,6 +81,71 @@ pub struct MonitorRecord {
     pub scale: f64,
 }
 
+/// How a saved [`MonitorRecord`] resolved against the displays attached
+/// now. Both non-`Missing` variants carry an index into the candidate
+/// slice that was searched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MonitorMatch {
+    /// Same display, same geometry — safe to relocate against.
+    Found(usize),
+    /// A display of that name is attached, but its size or scale moved.
+    /// Kept distinct from `Missing` so the caller can say *what* changed
+    /// instead of "not attached", which would send the user hunting for a
+    /// cable when the real cause was a resolution change.
+    Changed(usize),
+    /// Nothing attached carries that name.
+    Missing,
+}
+
+/// Resolve a session's monitor against the live enumeration by **identity**
+/// — name, size and scale — rather than by enumeration index.
+///
+/// The index is not stable: it shuffles across replugs, reboots and
+/// dock/undock, so matching on it alone breaks re-attachment for a display
+/// that never actually changed. Everything needed to recognize the panel is
+/// already recorded at capture time; this uses it.
+///
+/// Ties (two of the same model attached at once) break toward the
+/// candidate whose index equals the record's, then toward the lowest index.
+/// Preferring the recorded index first means the common case — nothing
+/// moved, or something *else* was replugged — resolves to the same panel it
+/// did before, rather than to whichever twin happens to enumerate first.
+pub fn match_monitor(record: &MonitorRecord, candidates: &[MonitorRecord]) -> MonitorMatch {
+    // Within a pool of equally valid candidates: the one that also carries
+    // the recorded index, else the lowest index. Empty pool yields None,
+    // which is what lets the two calls below fall through in order.
+    let best = |pool: &[usize]| -> Option<usize> {
+        pool.iter()
+            .copied()
+            .find(|&i| candidates[i].index == record.index)
+            .or_else(|| pool.iter().copied().min_by_key(|&i| candidates[i].index))
+    };
+
+    let named: Vec<usize> = candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.name == record.name)
+        .map(|(i, _)| i)
+        .collect();
+    if named.is_empty() {
+        return MonitorMatch::Missing;
+    }
+    let exact: Vec<usize> = named
+        .iter()
+        .copied()
+        .filter(|&i| {
+            let c = &candidates[i];
+            // Scale is a float off the platform API; compare it the way the
+            // rest of this codebase does rather than with `==`.
+            c.size_px == record.size_px && (c.scale - record.scale).abs() < f64::EPSILON
+        })
+        .collect();
+    if let Some(i) = best(&exact) {
+        return MonitorMatch::Found(i);
+    }
+    best(&named).map_or(MonitorMatch::Missing, MonitorMatch::Changed)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SelectionRecord {
     pub shape: ToolKind,
@@ -248,6 +313,113 @@ mod tests {
             size_px: Size::new(1920, 1080),
             scale: 2.0,
         }
+    }
+
+    /// A display identified by name, so tests can express "the same panel,
+    /// enumerated somewhere else".
+    fn panel(index: usize, name: &str, w: i32, h: i32, scale: f64) -> MonitorRecord {
+        MonitorRecord {
+            index,
+            name: name.into(),
+            primary: index == 0,
+            origin_px: Point::new(0, 0),
+            size_px: Size::new(w, h),
+            scale,
+        }
+    }
+
+    #[test]
+    fn a_replug_that_reorders_enumeration_still_finds_the_panel() {
+        // The bug this matcher exists for: same two displays, swapped
+        // enumeration order. Index-based lookup would hand back the wrong
+        // panel — or nothing.
+        let saved = panel(1, "DELL U2723QE", 3840, 2160, 1.0);
+        let live = [
+            panel(0, "DELL U2723QE", 3840, 2160, 1.0),
+            panel(1, "Built-in Retina Display", 3600, 2338, 2.0),
+        ];
+        assert_eq!(match_monitor(&saved, &live), MonitorMatch::Found(0));
+    }
+
+    #[test]
+    fn nothing_moved_resolves_to_the_recorded_index() {
+        let saved = panel(1, "Built-in Retina Display", 3600, 2338, 2.0);
+        let live = [
+            panel(0, "DELL U2723QE", 3840, 2160, 1.0),
+            panel(1, "Built-in Retina Display", 3600, 2338, 2.0),
+        ];
+        assert_eq!(match_monitor(&saved, &live), MonitorMatch::Found(1));
+    }
+
+    #[test]
+    fn identical_twins_break_toward_the_recorded_index_then_the_lowest() {
+        let live = [
+            panel(0, "DELL U2723QE", 3840, 2160, 1.0),
+            panel(1, "DELL U2723QE", 3840, 2160, 1.0),
+        ];
+        // The recorded index is present among the twins, so it wins.
+        let saved_one = panel(1, "DELL U2723QE", 3840, 2160, 1.0);
+        assert_eq!(match_monitor(&saved_one, &live), MonitorMatch::Found(1));
+
+        // The recorded index is gone; the tie breaks toward the lowest,
+        // deterministically rather than on enumeration luck.
+        let saved_seven = panel(7, "DELL U2723QE", 3840, 2160, 1.0);
+        assert_eq!(match_monitor(&saved_seven, &live), MonitorMatch::Found(0));
+    }
+
+    #[test]
+    fn the_lowest_index_wins_regardless_of_enumeration_order() {
+        // Candidates are searched in slice order, but the tie-break is on
+        // the recorded index — so a twin listed first does not win by
+        // position alone.
+        let saved = panel(9, "DELL U2723QE", 3840, 2160, 1.0);
+        let live = [
+            panel(3, "DELL U2723QE", 3840, 2160, 1.0),
+            panel(1, "DELL U2723QE", 3840, 2160, 1.0),
+        ];
+        assert_eq!(match_monitor(&saved, &live), MonitorMatch::Found(1));
+    }
+
+    #[test]
+    fn a_resized_display_is_changed_not_missing() {
+        // Template matching survives movement, not a resolution change —
+        // but the user needs to hear "it changed", not "it is unplugged".
+        let saved = panel(0, "DELL U2723QE", 3840, 2160, 1.0);
+        let live = [panel(0, "DELL U2723QE", 2560, 1440, 1.0)];
+        assert_eq!(match_monitor(&saved, &live), MonitorMatch::Changed(0));
+    }
+
+    #[test]
+    fn a_rescaled_display_is_changed_not_missing() {
+        let saved = panel(0, "Built-in Retina Display", 3600, 2338, 2.0);
+        let live = [panel(0, "Built-in Retina Display", 3600, 2338, 1.0)];
+        assert_eq!(match_monitor(&saved, &live), MonitorMatch::Changed(0));
+    }
+
+    #[test]
+    fn an_exact_match_beats_a_changed_one_of_the_same_name() {
+        // Two panels share a name; one still matches the session exactly.
+        // Identity must win over the recorded index.
+        let saved = panel(0, "DELL U2723QE", 3840, 2160, 1.0);
+        let live = [
+            panel(0, "DELL U2723QE", 2560, 1440, 1.0),
+            panel(1, "DELL U2723QE", 3840, 2160, 1.0),
+        ];
+        assert_eq!(match_monitor(&saved, &live), MonitorMatch::Found(1));
+    }
+
+    #[test]
+    fn an_absent_display_is_missing_even_when_something_else_fits() {
+        // Same geometry, different panel: not the display the session used.
+        let saved = panel(0, "DELL U2723QE", 3840, 2160, 1.0);
+        let live = [panel(0, "LG UltraFine", 3840, 2160, 1.0)];
+        assert_eq!(match_monitor(&saved, &live), MonitorMatch::Missing);
+    }
+
+    #[test]
+    fn no_displays_at_all_is_missing() {
+        let saved = panel(0, "DELL U2723QE", 3840, 2160, 1.0);
+        assert_eq!(match_monitor(&saved, &[]), MonitorMatch::Missing);
     }
 
     #[test]

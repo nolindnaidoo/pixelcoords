@@ -6,6 +6,37 @@ follow [Semantic Versioning](https://semver.org). Pre-1.0 policy:
 CLI or the session schema; **patch** (0.x.y) for fixes. 1.0.0 comes when
 the schema and CLI are declared stable.
 
+## 0.3.0
+
+### `find` recognizes a display instead of counting them
+
+Relocation matched a session's monitors to the attached ones by
+enumeration index. That index is not a property of a display — it is the
+order the OS happened to list them in, and it shuffles across replugs,
+reboots, and dock/undock. So unplugging a monitor and putting it back in a
+different port broke `find`, on hardware that had not changed at all.
+
+Everything needed to recognize a panel was already written into
+`session.json` at capture time — `name`, `size_px`, `scale`. Now it is
+used: a session's monitor resolves against the displays attached now by
+identity, and the index only breaks ties between two of the same model.
+The tie breaks toward the display that held the session's index if it is
+still present, so the common case resolves to the same panel it did
+before rather than to whichever twin enumerates first.
+
+Sessions get this for free. Nothing about `session.json` changed, and the
+schema version stays 1.
+
+### Two refusals where there was one
+
+"Monitor 1 is no longer attached" covered both a display that was gone and
+a display that was still there at a different resolution — one sentence
+sending everyone to check a cable. They are now separate: a missing
+display is named, with its recorded geometry and the list of what *is*
+attached; a changed one keeps the honest "relocation needs the same
+display setup" refusal, because template matching survives a window
+moving, not the pixels underneath it being resampled.
+
 ## 0.2.1
 
 Doc-only patch. `pixelcoords-core`'s install snippet said
