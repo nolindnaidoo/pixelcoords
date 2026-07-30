@@ -1,6 +1,6 @@
 [package]
 name = "pixelcoords-core"
-description = "Platform-free core logic for pixelcoords: geometry, selections, session schema, point verdicts, code emitters, template relocation, hotkeys, config, rasterizer"
+description = "Platform-free core of pixelcoords: screen geometry, HiDPI and multi-monitor coordinate spaces, the session.json schema, template relocation, point verdicts, and click-code emitters. Cross-platform (macOS, Windows, Linux), no unsafe"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,14 @@ homepage.workspace = true
 readme = "README.md"
 authors.workspace = true
 repository.workspace = true
-keywords.workspace = true
-categories.workspace = true
+# The library's slots, not the tool's. What someone building on this crate
+# searches for is the coordinate model — the thing the README says you must
+# get right — so `geometry`, `hidpi`, and `multi-monitor` lead. `screenshot`
+# is the one bridge back to the binary. NOT `command-line-utilities`: this
+# is a library, and filing it there was simply wrong. `computer-vision` is
+# matcher.rs; `graphics` is geometry.rs, draw.rs, and font.rs.
+keywords = ["geometry", "hidpi", "multi-monitor", "screenshot", "computer-use"]
+categories = ["development-tools", "computer-vision", "graphics", "multimedia::images"]
 
 [dependencies]
 # Rasterizes the embedded JetBrains Mono for overlay text — pure Rust,

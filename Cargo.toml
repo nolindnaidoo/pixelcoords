@@ -11,8 +11,12 @@ readme = "README.md"
 homepage = "https://pixelcoords.dev"
 authors = ["Nolin D Naidoo"]
 repository = "https://github.com/nolindnaidoo/pixelcoords"
-keywords = ["screenshot", "coordinates", "overlay", "automation", "capture"]
-categories = ["command-line-utilities", "development-tools", "multimedia::images"]
+# keywords / categories are deliberately NOT inherited: the binary and the
+# library are found by different searches. Someone typing `cargo install`
+# wants a screenshot tool; someone typing `[dependencies]` wants geometry
+# and a coordinate model. Sharing one set meant the library sat under
+# `command-line-utilities`, which it is not. Set per-crate — see each
+# package manifest.
 
 [profile.release]
 strip = true
