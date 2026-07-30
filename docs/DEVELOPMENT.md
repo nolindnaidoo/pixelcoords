@@ -134,6 +134,14 @@ fixes; 1.0.0 when schema and CLI are declared stable.
   The version in `Cargo.toml` does not move in feature PRs.
 - A GitHub **milestone** per upcoming minor collects its issues; the
   milestone emptying is the release trigger.
+- **The milestone is the only place an issue's target version lives.** An
+  issue body must never name one — not in its acceptance list, not in its
+  docs checklist, which says "the upcoming version's heading" and stops
+  there. A version written into prose is a copy of the milestone that
+  nothing keeps in sync: it survives re-planning, and it survives the
+  release shipping without it. Ten of eleven open issues carried such a
+  copy once, one of them naming a version that had already shipped. Moving
+  an issue between releases must stay a one-click act.
 - The release cut: one PR bumps the workspace version and the core dep
   pin. Then tag `v<X.Y.Z>` — the tag triggers
   `.github/workflows/release.yml`, which builds release binaries for
