@@ -24,7 +24,7 @@ fill = false               # fill shapes instead of outlining
 # Extra key bindings; later entries override earlier ones (and these
 # override the defaults). ACTIONS: quit, save, next_tool, delete_at_cursor,
 # label_edit_at_cursor, undo, redo, cycle_overlap, toggle_panel,
-# name_session, rotate_ccw, rotate_cw.
+# name_session, release_monitor, rotate_ccw, rotate_cw.
 # EDGE: press (default), release, repeat. WHEN: has_selection, cursor_in.
 #
 # Example: bring back bracket-key rotation alongside Q/E.

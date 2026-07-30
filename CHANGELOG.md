@@ -8,6 +8,27 @@ the schema and CLI are declared stable.
 
 ## 0.3.0
 
+### `R` releases one display and keeps the rest frozen
+
+Freezing three screens to mark one, then quitting and starting over
+because closing a window quit the whole app, was the shape of the problem.
+`R` now unfreezes the monitor under the cursor and closes its overlay,
+leaving the others exactly as they were. A save afterwards records only
+the monitors still frozen — the session says what was actually captured.
+
+The last window still quits, so ending a run stays an explicit act, and a
+monitor holding marks refuses with the count rather than discarding them:
+deleting is undoable and a window close is not a confirmation dialog. A
+release mid-drag is refused too, because the gesture holds an index into
+the frames being renumbered.
+
+**Why a keybinding rather than the window's close button:** there isn't
+one. The overlay windows are borderless and undecorated on every platform,
+so `CloseRequested` never fires from a user action — verified on macOS,
+where `Cmd+W` does nothing at all. Closing the window was the obvious
+design and it would have shipped unreachable. `R` is rebindable like every
+other letter; `release_monitor` is the action name.
+
 ### `[capture] monitors`: a launch default for people without a terminal
 
 A double-clicked binary froze every screen, every time, with no way to say

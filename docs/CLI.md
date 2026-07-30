@@ -87,6 +87,7 @@ regardless.
 | Arrows | Nudge 1px (`Shift` 10px, `Alt` resizes) |
 | `M` (hold) | Magnifier loupe |
 | `N` | Name the session |
+| `R` | Release the monitor under the cursor: unfreeze that display and close its window, leaving the others frozen. Refused while it still holds marks |
 | `Space` (hold) | Move the control panel (position persists) |
 | `H` | Hide / show the control panel |
 | `Esc` | Cancel what's active; quit when idle (asks once if unsaved) |

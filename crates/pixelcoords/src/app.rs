@@ -86,6 +86,17 @@ struct ViewSlot {
     view: OverlayView,
 }
 
+/// What a close request resolved to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Release {
+    /// The display is unfrozen and its window should go.
+    Done,
+    /// It still holds marks; nothing changed and the user was told.
+    Blocked,
+    /// The last window, or a gesture in flight — end the run instead.
+    Quit,
+}
+
 enum Mode {
     Idle,
     /// `frame` locks the draw to the monitor it started on; `path` is the
@@ -893,6 +904,84 @@ impl App {
         }
     }
 
+    /// Closing one overlay window when others remain releases that display
+    /// instead of quitting: the window goes away and the monitor is live
+    /// again. The last window keeps quit semantics, so the only way to end
+    /// the run is still an explicit one.
+    ///
+    /// Refused, rather than negotiated, in two cases. A monitor still
+    /// holding marks would strand them — deleting is an explicit, undoable
+    /// act and a window close is not a confirmation dialog. And a release
+    /// mid-gesture would pull the frame out from under a drag whose stored
+    /// index points into `frames`; the same reasoning as
+    /// `allowed_mid_gesture`.
+    fn release_frame(&mut self, event_loop: &ActiveEventLoop, frame: usize) {
+        if self.try_release_frame(frame) == Release::Quit {
+            self.request_quit(event_loop);
+        }
+    }
+
+    /// The half of a release that touches no window-system types, so the
+    /// bookkeeping below can be tested headless — which matters more here
+    /// than anywhere else in this file, because getting it wrong points a
+    /// live index at the wrong display rather than crashing.
+    fn try_release_frame(&mut self, frame: usize) -> Release {
+        if self.frames.len() <= 1 || !matches!(self.mode, Mode::Idle) {
+            return Release::Quit;
+        }
+        let monitor = self.frames[frame].info.index;
+        let held = self
+            .selections
+            .items()
+            .iter()
+            .filter(|s| s.monitor == monitor)
+            .count();
+        if held > 0 {
+            self.set_flash(
+                format!(
+                    "{}{held}{}",
+                    self.strings.hud_release_blocked_prefix,
+                    self.strings.hud_release_blocked_suffix
+                ),
+                FLASH_SAVE,
+            );
+            return Release::Blocked;
+        }
+
+        self.frames.remove(frame);
+        self.views.retain(|slot| slot.frame != frame);
+        // Everything holding a *position* into `frames` shifts down. Miss
+        // one and it silently addresses the wrong display: `ViewSlot.frame`
+        // in particular backs `frame_of_window`, which every later event
+        // resolves through.
+        for slot in &mut self.views {
+            if slot.frame > frame {
+                slot.frame -= 1;
+            }
+        }
+        if self.cursor_frame > frame {
+            self.cursor_frame -= 1;
+        } else if self.cursor_frame == frame {
+            self.cursor_frame = 0;
+        }
+        self.panel_origin = match self.panel_origin {
+            // The panel's host is gone: it moves to where the cursor now
+            // is rather than vanishing with the display.
+            Some((host, _)) if host == frame => None,
+            Some((host, at)) if host > frame => Some((host - 1, at)),
+            other => other,
+        };
+        crate::state::save_panel(self.panel_origin);
+        // Undo entries can reference a frame that no longer exists, and
+        // filtering them would be guesswork about what a half-valid history
+        // means. Truncating matches resume, where the reopen point is the
+        // floor.
+        self.selections = SelectionSet::seed(self.selections.items().to_vec());
+        self.set_flash(self.strings.hud_released.to_string(), FLASH_SAVE);
+        self.redraw_all();
+        Release::Done
+    }
+
     fn request_quit(&mut self, event_loop: &ActiveEventLoop) {
         let unsaved = self.dirty;
         let armed = self
@@ -909,6 +998,7 @@ impl App {
     fn apply_action(&mut self, event_loop: &ActiveEventLoop, action: Action) {
         match action {
             Action::Quit => self.request_quit(event_loop),
+            Action::ReleaseMonitor => self.release_frame(event_loop, self.cursor_frame),
             Action::Save => self.save(),
             Action::NextTool => {
                 // The mid-gesture gate guarantees Idle here.
@@ -1067,7 +1157,10 @@ impl ApplicationHandler for App {
             return;
         }
         match event {
-            WindowEvent::CloseRequested => self.request_quit(event_loop),
+            WindowEvent::CloseRequested => match self.frame_of_window(window_id) {
+                Some(frame) => self.release_frame(event_loop, frame),
+                None => self.request_quit(event_loop),
+            },
             WindowEvent::RedrawRequested => self.render(window_id),
             WindowEvent::Resized(_) => self.redraw_all(),
             WindowEvent::CursorMoved { position, .. } => self.cursor_moved(window_id, position),
@@ -1424,6 +1517,133 @@ mod tests {
             None,
             Presentation::Fullscreen,
         )
+    }
+
+    /// Three frames, so a release from the middle has both a frame below
+    /// it (index unchanged) and one above it (index must shift down).
+    fn test_app_multi() -> App {
+        let frames: Vec<MonitorFrame> = (0..3)
+            .map(|index| {
+                let info = MonitorInfo {
+                    index,
+                    name: format!("Fake {index}"),
+                    primary: index == 0,
+                    origin: Point::new(index as i32 * 100, 0),
+                    size_native: Size::new(100, 60),
+                    scale: 1.0,
+                };
+                MonitorFrame::new(
+                    info,
+                    RgbaImage::from_pixel(100, 60, image::Rgba([9, 9, 9, 255])),
+                )
+            })
+            .collect();
+        App::new(
+            frames,
+            Config::default().resolve_style().unwrap(),
+            default_bindings(),
+            std::env::temp_dir().join("pixelcoords-app-test-unused"),
+            None,
+            Presentation::Fullscreen,
+        )
+    }
+
+    #[test]
+    fn releasing_a_frame_shifts_every_position_above_it_down() {
+        let mut app = test_app_multi();
+        // Positions into `frames` that must survive a removal below them.
+        app.cursor_frame = 2;
+        app.panel_origin = Some((2, Point::new(5, 5)));
+
+        assert_eq!(app.try_release_frame(1), Release::Done);
+
+        assert_eq!(app.frames.len(), 2);
+        assert_eq!(
+            app.frames.iter().map(|f| f.info.index).collect::<Vec<_>>(),
+            vec![0, 2],
+            "the surviving frames keep their monitor indices"
+        );
+        assert_eq!(app.cursor_frame, 1, "was 2, the frame below it went");
+        assert_eq!(app.panel_origin, Some((1, Point::new(5, 5))));
+    }
+
+    #[test]
+    fn releasing_a_frame_leaves_positions_below_it_alone() {
+        let mut app = test_app_multi();
+        app.cursor_frame = 0;
+        app.panel_origin = Some((0, Point::new(5, 5)));
+
+        assert_eq!(app.try_release_frame(2), Release::Done);
+
+        assert_eq!(app.cursor_frame, 0);
+        assert_eq!(app.panel_origin, Some((0, Point::new(5, 5))));
+    }
+
+    #[test]
+    fn releasing_the_panels_own_frame_sends_it_back_to_the_default_corner() {
+        let mut app = test_app_multi();
+        app.panel_origin = Some((1, Point::new(5, 5)));
+        app.cursor_frame = 1;
+
+        assert_eq!(app.try_release_frame(1), Release::Done);
+
+        assert_eq!(app.panel_origin, None, "its host is gone");
+        assert_eq!(app.cursor_frame, 0, "the cursor's frame went with it");
+    }
+
+    #[test]
+    fn a_frame_holding_marks_refuses_release_and_says_how_many() {
+        let mut app = test_app_multi();
+        // Two marks on the monitor behind frame 1.
+        for _ in 0..2 {
+            app.selections
+                .add(Selection::new(rect(1, 1, 5, 5), app.frames[1].info.index));
+        }
+
+        assert_eq!(app.try_release_frame(1), Release::Blocked);
+
+        assert_eq!(app.frames.len(), 3, "nothing was released");
+        let flash = app.flash.as_ref().expect("a flash").0.clone();
+        assert!(flash.contains('2'), "got: {flash}");
+    }
+
+    #[test]
+    fn the_last_frame_quits_instead_of_releasing() {
+        let mut app = test_app();
+        assert_eq!(app.try_release_frame(0), Release::Quit);
+        assert_eq!(app.frames.len(), 1, "still frozen until the run ends");
+    }
+
+    #[test]
+    fn a_release_mid_gesture_quits_rather_than_pulling_the_frame_out() {
+        let mut app = test_app_multi();
+        app.mode = Mode::Drawing {
+            frame: 2,
+            start: Point::new(1, 1),
+            path: vec![Point::new(1, 1)],
+        };
+        assert_eq!(app.try_release_frame(1), Release::Quit);
+        assert_eq!(app.frames.len(), 3);
+    }
+
+    #[test]
+    fn releasing_truncates_undo_history_but_keeps_the_marks() {
+        let mut app = test_app_multi();
+        // A mark on a frame that is NOT the one being released, so the
+        // release is allowed and the mark must survive it.
+        app.selections
+            .add(Selection::new(rect(1, 1, 5, 5), app.frames[0].info.index));
+        assert!(app.selections.undo(), "history exists before the release");
+        app.selections
+            .add(Selection::new(rect(2, 2, 5, 5), app.frames[0].info.index));
+
+        assert_eq!(app.try_release_frame(2), Release::Done);
+
+        assert_eq!(app.selections.len(), 1, "the mark survived");
+        assert!(
+            !app.selections.undo(),
+            "history is truncated — entries could reference a gone frame"
+        );
     }
 
     fn rect(x: i32, y: i32, w: i32, h: i32) -> Shape {

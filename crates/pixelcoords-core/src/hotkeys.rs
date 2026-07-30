@@ -50,6 +50,11 @@ pub enum Action {
     RotateCcw,
     /// Rotate the shape under the cursor clockwise.
     RotateCw,
+    /// Unfreeze the monitor under the cursor and close its overlay window,
+    /// leaving the others frozen. The only way to reach this: the overlay
+    /// windows are borderless and undecorated, so no close button exists
+    /// and `CloseRequested` never fires from a user action.
+    ReleaseMonitor,
     /// Accepted by the grammar for forward compatibility; snapshot mode has
     /// no themes, so the binary treats it as a no-op.
     NextTheme,
@@ -115,6 +120,7 @@ pub fn parse_action(s: &str) -> Result<Action, HotkeyError> {
         "name_session" => Ok(Action::NameSession),
         "rotate_ccw" => Ok(Action::RotateCcw),
         "rotate_cw" => Ok(Action::RotateCw),
+        "release_monitor" => Ok(Action::ReleaseMonitor),
         "next_theme" => Ok(Action::NextTheme),
         other => Err(HotkeyError::UnknownAction(other.to_string())),
     }
@@ -181,6 +187,8 @@ pub fn default_bindings() -> Vec<Binding> {
         "c=cycle_overlap,press,cursor_in",
         "h=toggle_panel",
         "n=name_session",
+        // The only trigger for releasing one display; see Action::ReleaseMonitor.
+        "r=release_monitor",
         // Rotation binds press AND repeat so holding the key keeps turning.
         "q=rotate_ccw,press,cursor_in",
         "q=rotate_ccw,repeat,cursor_in",
@@ -396,7 +404,18 @@ mod tests {
     #[test]
     fn defaults_cover_expected_keys() {
         let bindings = default_bindings();
-        assert_eq!(bindings.len(), 13);
+        assert_eq!(bindings.len(), 14);
+        assert_eq!(
+            match_event(
+                &bindings,
+                KeyName::Character('R'),
+                Edge::Press,
+                OverlayState::default()
+            ),
+            Some(Action::ReleaseMonitor),
+            "R releases a monitor — the only trigger, since undecorated \
+             overlay windows have no close button"
+        );
         // W and Tab both cycle the tool; Z undoes; quit is not in the
         // table at all — it lives on Esc in the app.
         for key in [KeyName::Character('W'), KeyName::Tab] {

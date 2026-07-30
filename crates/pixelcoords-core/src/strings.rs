@@ -14,6 +14,13 @@ pub struct Strings {
     pub hud_saved_prefix: &'static str,
     pub hud_save_failed_prefix: &'static str,
     pub hud_quit_unsaved: &'static str,
+    /// Closing a window that still holds marks. The count goes between the
+    /// two halves; deleting stays an explicit act, so this refuses rather
+    /// than offering to discard.
+    pub hud_release_blocked_prefix: &'static str,
+    pub hud_release_blocked_suffix: &'static str,
+    /// A window closed while others remain: that display is live again.
+    pub hud_released: &'static str,
 }
 
 pub const EN: Strings = Strings {
@@ -31,6 +38,7 @@ pub const EN: Strings = Strings {
         ("arrows", "nudge (Shift 10, Alt size)"),
         ("M", "hold: loupe"),
         ("N", "name session"),
+        ("R", "release monitor"),
         ("3-9", "polygon sides"),
         ("Space", "hold: move panel"),
         ("H", "hide panel"),
@@ -40,4 +48,7 @@ pub const EN: Strings = Strings {
     hud_saved_prefix: "Saved ",
     hud_save_failed_prefix: "Save failed: ",
     hud_quit_unsaved: "Unsaved work - S saves, Esc again quits",
+    hud_release_blocked_prefix: "Monitor holds ",
+    hud_release_blocked_suffix: " selections - delete them first",
+    hud_released: "Monitor released",
 };
