@@ -20,9 +20,11 @@ https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/OUTPUT.md";
 #[derive(Debug, Parser)]
 #[command(name = "pixelcoords", version, about, after_help = EXAMPLES)]
 pub struct Cli {
-    /// Freeze only this monitor index (default: all monitors)
-    #[arg(long)]
-    pub monitor: Option<usize>,
+    /// Freeze only these monitors (default: all). Each is an index, the
+    /// word `primary`, or part of a display's name — repeat the flag or
+    /// separate with commas: --monitor primary,DELL
+    #[arg(long, value_name = "QUERY", value_delimiter = ',')]
+    pub monitor: Vec<String>,
 
     /// Attach to a window: matches its title (then app name), freezes that
     /// window's monitor, and adds window-relative coordinates to the output
@@ -82,6 +84,10 @@ pub enum Command {
         /// Output directory (default: Downloads/pixelcoords-captures/<timestamp>)
         #[arg(long, value_name = "DIR")]
         out: Option<PathBuf>,
+        /// Capture only these monitors (default: all). Same grammar as the
+        /// root --monitor: an index, `primary`, or part of a display's name
+        #[arg(long, value_name = "QUERY", value_delimiter = ',')]
+        monitor: Vec<String>,
     },
     /// Test a point against a saved session's regions: prints a JSON
     /// verdict; exits 0 on hit, 1 on miss, 2 on error

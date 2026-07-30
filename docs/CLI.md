@@ -20,13 +20,46 @@ Freezes the screen and opens the marking overlay.
 
 | Flag | Meaning |
 |------|---------|
-| `--monitor <N>` | Freeze only this monitor (default: all) |
+| `--monitor <QUERY>` | Freeze only these monitors (default: all). Repeatable, or comma-separated — see below |
 | `--target <TITLE>` | Attach to a window: match its title (exact, prefix, substring), then app name. Locks the drawable region to the window (see below) and records `window_px` coordinates on every mark |
 | `--pick` | Linux: freeze one window chosen in the system picker — the Wayland answer to `--target` |
 | `--out <DIR>` | Output directory (default: `Downloads/pixelcoords-captures/<timestamp>`) |
 | `--name <TEXT>` | Friendly session name for the resume picker |
 | `--config <FILE>` | Config file (default: the OS config dir) |
 | `--bind KEY=ACTION[,EDGE][,WHEN]` | Extra key binding, repeatable — see [CONFIGURATION.md](CONFIGURATION.md) |
+
+### Choosing monitors
+
+Each `--monitor` value is one of three things:
+
+| Query | Means |
+|-------|-------|
+| `0`, `1`, … | The monitor with that index, as `doctor` lists it |
+| `primary` | The display the OS marks primary — exactly one always is |
+| any other text | Part of a display's name: exact, then prefix, then substring, case-insensitive |
+
+Repeat the flag or separate with commas; the same display named twice is
+frozen once, and the set comes back in enumeration order regardless of the
+order you asked:
+
+```bash
+pixelcoords --monitor primary
+pixelcoords --monitor 0,2
+pixelcoords --monitor primary --monitor DELL
+```
+
+Nothing here falls back silently. A query matching no monitor is an error
+listing what is attached; a **name** matching two displays equally well is
+an error listing both, because guessing would freeze a screen you did not
+mean and you would only find out after marking it. Two panels of the same
+model are exactly this case — address them by index.
+
+**How useful a name is depends on your platform.** The name is whatever the
+capture backend reports, and that is not always something you would
+recognize: on this project's macOS test machine it comes back as
+`Display #41054`, while X11 and Windows typically report the model. Run
+`doctor` to see what yours are called — it lists them, and the index and
+`primary` work everywhere regardless.
 
 ### Overlay controls
 
@@ -75,11 +108,13 @@ X11 only on Linux; on Wayland it exits nonzero and points at `--pick`.
 
 ## `shoot`
 
-Capture every monitor straight to PNG files — no overlay, no session.
+Capture monitors straight to PNG files — no overlay, no session. Every
+monitor by default, or the ones you name.
 
 | Flag | Meaning |
 |------|---------|
 | `--out <DIR>` | Output directory (default: the Downloads default) |
+| `--monitor <QUERY>` | Capture only these monitors — same grammar as the overlay's, see [Choosing monitors](#choosing-monitors) |
 
 ## `resume`
 
@@ -118,7 +153,7 @@ nearest region and its distance).
 | `--point <X,Y>` | The point (negatives allowed) |
 | `--label <TEXT>` | Only this label counts as a hit (case-insensitive) |
 | `--space global\|monitor\|window` | Which stored coordinates the point is in (default `global`) |
-| `--monitor <N>` | The monitor for `--space monitor` |
+| `--monitor <N>` | The monitor for `--space monitor` — an **index only**, and a different flag from the overlay's `--monitor` above. This one names a monitor *recorded in the session*, where the index is the record's own identifier; the overlay's picks a display attached right now |
 
 ## `emit`
 
