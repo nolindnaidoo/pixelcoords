@@ -1,10 +1,11 @@
 # Changelog
 
 All notable changes are recorded here, written as they land. Versions
-follow [Semantic Versioning](https://semver.org). Pre-1.0 policy:
-**minor** (0.x.0) for new features and for any breaking change to the
-CLI or the session schema; **patch** (0.x.y) for fixes. 1.0.0 comes when
-the schema and CLI are declared stable.
+follow [Semantic Versioning](https://semver.org): **minor** (0.x.0) for
+new features and for any breaking change to the CLI or the session
+schema; **patch** (0.x.y) for fixes. The version keeps incrementing
+through 0.x — there is no 1.0 planned, so read the entry below, not the
+version number, for what changed under you.
 
 ## 0.3.0
 

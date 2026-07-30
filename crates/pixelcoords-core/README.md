@@ -250,7 +250,7 @@ physical pixels on Windows but logical points on macOS. `cliclick` and
 | `draw`, `font` | CPU rasterizer, embedded JetBrains Mono | overlay internals |
 | `hotkeys`, `config`, `strings`, `matcher` | binding grammar, strict TOML config, UI text, window-title matching | overlay internals |
 
-**Stability, honestly.** This is pre-1.0 and shares a version with the
+**Stability, honestly.** This stays on 0.x and shares a version with the
 binary, so a minor bump can change any signature here. The **session
 schema is the part with a real compatibility promise**: it is versioned
 (`SCHEMA_VERSION`), additions are optional fields, and consumers that
