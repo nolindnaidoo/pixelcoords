@@ -68,6 +68,59 @@ pub fn select(query: &str, candidates: &[WindowCandidate]) -> Option<usize> {
         .map(|(_, i)| i)
 }
 
+/// How well a query matched a monitor name. Ranked worst to best, so
+/// deriving `Ord` gives the comparison the selector wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum NameMatch {
+    Contains,
+    StartsWith,
+    Exact,
+}
+
+/// Pick the monitors whose names match `query`, best rank only.
+///
+/// Same discipline as [`select`] — case-insensitive, exact beats prefix
+/// beats substring — but the return shape differs on purpose. Windows are
+/// stacked, so `select` can always break a tie with z-order and hand back a
+/// single winner. Monitors have no such ordering: two displays matching a
+/// query equally well is a question only the user can answer, and silently
+/// picking one would freeze the wrong screen. So this returns **every**
+/// candidate at the best rank and leaves the caller to reject more than one.
+///
+/// Indices are into `names`, in the order given. An empty query matches
+/// nothing, as with windows.
+pub fn select_monitors(query: &str, names: &[String]) -> Vec<usize> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let ranked: Vec<(NameMatch, usize)> = names
+        .iter()
+        .enumerate()
+        .filter_map(|(i, name)| {
+            let name = name.to_lowercase();
+            if name == query {
+                return Some((NameMatch::Exact, i));
+            }
+            if name.starts_with(&query) {
+                return Some((NameMatch::StartsWith, i));
+            }
+            if name.contains(&query) {
+                return Some((NameMatch::Contains, i));
+            }
+            None
+        })
+        .collect();
+    let Some(best) = ranked.iter().map(|(kind, _)| *kind).max() else {
+        return Vec::new();
+    };
+    ranked
+        .into_iter()
+        .filter(|(kind, _)| *kind == best)
+        .map(|(_, i)| i)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +174,53 @@ mod tests {
         assert_eq!(select("", &candidates), None);
         assert_eq!(select("   ", &candidates), None);
         assert_eq!(select("x", &[]), None);
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn monitor_exact_beats_prefix_beats_substring() {
+        let all = names(&["DELL U2723QE Secondary", "DELL U2723QE", "Old DELL U2723QE"]);
+        assert_eq!(select_monitors("dell u2723qe", &all), vec![1]);
+    }
+
+    #[test]
+    fn a_monitor_prefix_beats_a_substring() {
+        let all = names(&["Thunderbolt Display", "Built-in Thunderbolt"]);
+        assert_eq!(select_monitors("thunderbolt", &all), vec![0]);
+    }
+
+    #[test]
+    fn monitor_matching_is_case_insensitive_and_trims() {
+        let all = names(&["Built-in Retina Display"]);
+        assert_eq!(select_monitors("  BUILT-IN  ", &all), vec![0]);
+    }
+
+    #[test]
+    fn every_equally_good_monitor_comes_back_so_the_caller_can_refuse() {
+        // Two identical panels, one query, no z-order to separate them.
+        // Returning both is the point: picking one would freeze the wrong
+        // screen and never say so.
+        let all = names(&["DELL U2723QE", "DELL U2723QE"]);
+        assert_eq!(select_monitors("dell", &all), vec![0, 1]);
+    }
+
+    #[test]
+    fn a_better_rank_still_wins_over_several_worse_ones() {
+        // Ambiguity is only ambiguity at the same rank — an exact match
+        // resolves a query that three substrings also matched.
+        let all = names(&["DELL U2723QE Left", "DELL", "DELL U2723QE Right"]);
+        assert_eq!(select_monitors("dell", &all), vec![1]);
+    }
+
+    #[test]
+    fn no_monitor_match_and_empty_query_return_nothing() {
+        let all = names(&["Built-in Retina Display"]);
+        assert!(select_monitors("zzz", &all).is_empty());
+        assert!(select_monitors("", &all).is_empty());
+        assert!(select_monitors("   ", &all).is_empty());
+        assert!(select_monitors("x", &[]).is_empty());
     }
 }

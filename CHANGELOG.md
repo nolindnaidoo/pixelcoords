@@ -8,6 +8,48 @@ the schema and CLI are declared stable.
 
 ## 0.3.0
 
+### `--monitor` takes a name, not just a number
+
+`--monitor` accepted one index. Indexes are enumeration order, so the only
+way to discover one was `doctor`, and the number a script pinned last week
+can address a different panel today. Windows have had a real matcher since
+the start; monitors got a bare integer.
+
+Now each `--monitor` value is an index, the word `primary`, or part of a
+display's name — matched exact, then prefix, then substring,
+case-insensitively, the same discipline `--target` uses on window titles.
+The flag repeats and accepts commas, so `--monitor primary,DELL` freezes
+both. Naming one display twice freezes it once, and the set comes back in
+enumeration order however you asked for it. `shoot` takes the same flag.
+
+Nothing falls back silently. A query matching nothing is an error listing
+what is attached. A **name** matching two displays equally well is an error
+listing both, rather than a guess — unlike windows, monitors have no
+stacking order to break the tie with, and freezing the wrong screen is
+discovered only after you have marked regions on it. Two panels of the
+same model are exactly that case; address them by index.
+
+`doctor` now says the name is addressable rather than leaving it as data
+on a line.
+
+A number is read as an index first — `--monitor 0` always means index 0 —
+and falls through to a name when nothing carries that index. That is not
+a nicety: macOS reports display names like `Display #41054`, so the digits
+are the only distinctive thing to type, and reading them strictly as an
+index made the most obvious query the one that could not work.
+
+**One honest limit:** the name is whatever the capture backend reports,
+and it is not always recognizable. Two displays on this project's macOS
+test machine came back as `Display #41054` and `Display #15824` — so they
+share the word `Display`, and matching on it is ambiguous rather than
+useful. X11 and Windows typically report the model. The index and
+`primary` work everywhere regardless, and `doctor` shows you what yours
+are called.
+
+`assert --monitor` is untouched and stays an index. It names a monitor
+*recorded in a session*, where the index is the record's own identifier —
+a different question from picking a display attached right now.
+
 ### `find` recognizes a display instead of counting them
 
 Relocation matched a session's monitors to the attached ones by

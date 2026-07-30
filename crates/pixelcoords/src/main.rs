@@ -60,7 +60,7 @@ fn main() -> Result<()> {
             std::process::exit(1)
         }
         Some(cli::Command::Windows { json }) => list_windows(&XcapCapture, json),
-        Some(cli::Command::Shoot { out }) => shoot(out.or(args.out)),
+        Some(cli::Command::Shoot { out, ref monitor }) => shoot(out.or(args.out.clone()), monitor),
         Some(cli::Command::Assert {
             ref session,
             ref point,
@@ -1033,14 +1033,101 @@ fn select_targets<P: CaptureProvider>(
         let (monitor, record) = resolve_target(provider, monitors, query)?;
         return Ok((vec![monitor], Some(record)));
     }
-    if let Some(index) = args.monitor {
-        let monitor = monitors
-            .into_iter()
-            .find(|m| m.index == index)
-            .with_context(|| format!("--monitor {index} is out of range"))?;
-        return Ok((vec![monitor], None));
+    if !args.monitor.is_empty() {
+        return Ok((resolve_monitors(&args.monitor, monitors)?, None));
     }
     Ok((monitors, None))
+}
+
+/// The available displays, as the error messages list them — index first,
+/// because that is what a script pins, then the name, because that is what
+/// a person recognizes.
+fn describe_monitors(monitors: &[capture::MonitorInfo]) -> String {
+    monitors
+        .iter()
+        .map(|m| {
+            let primary = if m.primary { " (primary)" } else { "" };
+            format!("  [{}] {:?}{primary}", m.index, m.name)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Resolve `--monitor` queries to the displays they name, in enumeration
+/// order. Each query is an index, the word `primary`, or part of a name.
+///
+/// Every failure is loud. Freezing the wrong screen — or silently falling
+/// back to all of them — would be discovered only after the user had
+/// already marked regions on it.
+fn resolve_monitors(
+    queries: &[String],
+    monitors: Vec<capture::MonitorInfo>,
+) -> Result<Vec<capture::MonitorInfo>> {
+    let names: Vec<String> = monitors.iter().map(|m| m.name.clone()).collect();
+    // Positions into `monitors`, not monitor indices: the caller wants the
+    // subset in enumeration order, and a set keeps `--monitor 1,DELL`
+    // naming the same display twice from freezing it twice.
+    let mut chosen: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+
+    for query in queries {
+        let query = query.trim();
+        if query.eq_ignore_ascii_case("primary") {
+            // `normalize_primary` guarantees exactly one, so this cannot be
+            // ambiguous the way a name can.
+            let position = monitors.iter().position(|m| m.primary).with_context(|| {
+                format!(
+                    "no monitor is marked primary — attached:\n{}",
+                    describe_monitors(&monitors)
+                )
+            })?;
+            chosen.insert(position);
+            continue;
+        }
+        // A number is an index first: `--monitor 0` has always meant index
+        // 0 and must keep doing so. But an index nothing carries is free to
+        // be a name — and it has to be, because a backend may report names
+        // that are mostly digits ("Display #41054" on macOS), where the
+        // number is the only distinctive thing to type. Refusing those
+        // would make the most obvious query the one that cannot work.
+        let numeric = query.parse::<usize>().ok();
+        if let Some(index) = numeric
+            && let Some(position) = monitors.iter().position(|m| m.index == index)
+        {
+            chosen.insert(position);
+            continue;
+        }
+        let matches = pixelcoords_core::matcher::select_monitors(query, &names);
+        anyhow::ensure!(
+            !matches.is_empty(),
+            "--monitor {query:?}: {} — attached:\n{}",
+            if numeric.is_some() {
+                "no monitor has that index, and no name matches either"
+            } else {
+                "no monitor name matches"
+            },
+            describe_monitors(&monitors)
+        );
+        // More than one match at the best rank is a question only the user
+        // can answer; guessing would freeze a screen they did not mean.
+        anyhow::ensure!(
+            matches.len() == 1,
+            "--monitor {query:?} is ambiguous — it matches:\n{}\nName one exactly, or use its index.",
+            describe_monitors(
+                &matches
+                    .iter()
+                    .map(|&i| monitors[i].clone())
+                    .collect::<Vec<_>>()
+            )
+        );
+        chosen.insert(matches[0]);
+    }
+
+    Ok(monitors
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| chosen.contains(i))
+        .map(|(_, m)| m)
+        .collect())
 }
 
 /// Match `query` against the visible windows, pick the monitor holding the
@@ -1195,7 +1282,10 @@ fn doctor(config: Option<&std::path::Path>) -> bool {
         None => println!("config: no config directory on this system, using defaults"),
     }
 
-    println!("\nmonitors (as reported by the capture backend):");
+    // The name is the addressable handle, not decoration: `--monitor` takes
+    // it, and unlike the index it survives a replug. Say so here, because
+    // this listing is where people come to find out what to type.
+    println!("\nmonitors (address any with --monitor <index> or --monitor <name>):");
     match XcapCapture.monitors() {
         Ok(monitors) => {
             for m in monitors {
@@ -1223,7 +1313,7 @@ fn doctor(config: Option<&std::path::Path>) -> bool {
 
 /// Capture every monitor to PNG — the M2 spike. Prints the logical-vs-
 /// captured size table that pins down the coordinate mapping empirically.
-fn shoot(out: Option<PathBuf>) -> Result<()> {
+fn shoot(out: Option<PathBuf>, monitor: &[String]) -> Result<()> {
     #[cfg(target_os = "macos")]
     if !mac::has_screen_capture_access() && !mac::request_screen_capture_access() {
         anyhow::bail!(
@@ -1235,7 +1325,11 @@ fn shoot(out: Option<PathBuf>) -> Result<()> {
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
 
     let provider = XcapCapture;
-    for m in provider.monitors()? {
+    let targets = match monitor {
+        [] => provider.monitors()?,
+        queries => resolve_monitors(queries, provider.monitors()?)?,
+    };
+    for m in targets {
         let img = provider.capture(&m)?;
         let path = dir.join(format!("screenshot-{}.png", m.index));
         img.save(&path)
@@ -1288,7 +1382,9 @@ fn captures_root(downloads: Option<PathBuf>) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{config_path, load_config, resolve_target, select_targets, truncate};
+    use super::{
+        config_path, load_config, resolve_monitors, resolve_target, select_targets, truncate,
+    };
     use crate::capture::{
         CaptureProvider, FakeCapture, MonitorInfo, NATIVE_COORD_SPACE, WindowInfo, to_physical,
     };
@@ -1397,6 +1493,135 @@ mod tests {
         let record = record.expect("target record");
         assert_eq!(record.origin_px, Point::new(10, 10));
         assert_eq!(record.size_px, Size::new(50, 30));
+    }
+
+    /// `--monitor` accepts what a person can actually remember: a name, the
+    /// word `primary`, or the index a script pinned.
+    #[test]
+    fn monitor_queries_resolve_by_name_primary_and_index() {
+        let provider = MixedDpi;
+        let monitors = || provider.monitors().unwrap();
+        let select = |args: &[&str]| {
+            let cli = crate::cli::Cli::try_parse_from(args).unwrap();
+            select_targets(&cli, &provider, monitors())
+                .map(|(targets, _)| targets.into_iter().map(|m| m.index).collect::<Vec<_>>())
+        };
+
+        assert_eq!(select(&["pixelcoords", "--monitor", "1"]).unwrap(), vec![1]);
+        assert_eq!(
+            select(&["pixelcoords", "--monitor", "primary"]).unwrap(),
+            vec![0]
+        );
+        assert_eq!(
+            select(&["pixelcoords", "--monitor", "retina"]).unwrap(),
+            vec![1],
+            "a name is matched case-insensitively, on a substring"
+        );
+    }
+
+    #[test]
+    fn a_monitor_list_freezes_the_named_set_in_enumeration_order() {
+        let provider = MixedDpi;
+        let cli = crate::cli::Cli::try_parse_from(["pixelcoords", "--monitor", "retina,primary"])
+            .unwrap();
+        let (targets, _) = select_targets(&cli, &provider, provider.monitors().unwrap()).unwrap();
+        let indices: Vec<usize> = targets.iter().map(|m| m.index).collect();
+        assert_eq!(
+            indices,
+            vec![0, 1],
+            "the subset comes back in enumeration order, not query order"
+        );
+    }
+
+    #[test]
+    fn naming_the_same_monitor_twice_freezes_it_once() {
+        let provider = MixedDpi;
+        let cli = crate::cli::Cli::try_parse_from(["pixelcoords", "--monitor", "0,primary,Left"])
+            .unwrap();
+        let (targets, _) = select_targets(&cli, &provider, provider.monitors().unwrap()).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].index, 0);
+    }
+
+    #[test]
+    fn a_monitor_query_that_matches_nothing_lists_what_is_attached() {
+        let provider = MixedDpi;
+        let cli = crate::cli::Cli::try_parse_from(["pixelcoords", "--monitor", "nope"]).unwrap();
+        let err = select_targets(&cli, &provider, provider.monitors().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Right Retina"), "got: {err}");
+        assert!(err.contains("Left"), "got: {err}");
+    }
+
+    #[test]
+    fn an_out_of_range_monitor_index_is_refused_by_number() {
+        let provider = MixedDpi;
+        let cli = crate::cli::Cli::try_parse_from(["pixelcoords", "--monitor", "9"]).unwrap();
+        let err = select_targets(&cli, &provider, provider.monitors().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains('9'), "got: {err}");
+    }
+
+    /// Found on real hardware, not by a fake: macOS reports display names
+    /// like "Display #41054", so the digits are the most distinctive thing
+    /// to type — and they parsed as an index, failed to be one, and were
+    /// refused. An index nothing carries has to fall through to a name.
+    #[test]
+    fn a_numeric_query_that_is_no_index_is_tried_as_a_name() {
+        let display = |index: usize, id: &str| MonitorInfo {
+            index,
+            name: format!("Display #{id}"),
+            primary: index == 0,
+            origin: Point::new(0, 0),
+            size_native: Size::new(100, 60),
+            scale: 1.0,
+        };
+        let monitors = vec![display(0, "41054"), display(1, "15824")];
+
+        let by_name = resolve_monitors(&["41054".to_string()], monitors.clone()).unwrap();
+        assert_eq!(by_name.len(), 1);
+        assert_eq!(by_name[0].index, 0);
+
+        // An index that *does* exist still wins — `--monitor 1` cannot
+        // start meaning something else.
+        let by_index = resolve_monitors(&["1".to_string()], monitors.clone()).unwrap();
+        assert_eq!(by_index[0].index, 1);
+
+        // Neither reading works: say both were tried.
+        let err = resolve_monitors(&["99999".to_string()], monitors)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("no monitor has that index"), "got: {err}");
+        assert!(err.contains("no name matches either"), "got: {err}");
+    }
+
+    #[test]
+    fn two_displays_of_the_same_model_refuse_a_name_rather_than_guessing() {
+        // The case the core selector returns both for. Freezing one at
+        // random would be discovered only after the user marked regions on
+        // the wrong screen, so this must refuse and say so.
+        let twins = |index: usize| MonitorInfo {
+            index,
+            name: "DELL U2723QE".into(),
+            primary: index == 0,
+            origin: Point::new(0, 0),
+            size_native: Size::new(100, 60),
+            scale: 1.0,
+        };
+        let monitors = vec![twins(0), twins(1)];
+        let err = resolve_monitors(&["DELL".to_string()], monitors.clone())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("ambiguous"), "got: {err}");
+        assert!(err.contains("[0]") && err.contains("[1]"), "got: {err}");
+
+        // The index still addresses them individually — ambiguity is a
+        // property of the name, not of the displays.
+        let picked = resolve_monitors(&["1".to_string()], monitors).unwrap();
+        assert_eq!(picked.len(), 1);
+        assert_eq!(picked[0].index, 1);
     }
 
     #[test]
