@@ -85,12 +85,18 @@ pixelcoords find --session <dir>
 # the UI moved? every region re-located by its saved crop, deltas included
 
 pixelcoords resume                # pick any saved session, keep editing it
+
+pixelcoords --monitor primary     # freeze one display instead of all of them
+# also an index, or part of a display's name: --monitor 0,DELL
 ```
 
 Window-attached sessions with `--target "Title"` (macOS/Windows/X11)
 or `--pick` (Wayland): drawing is locked to the window, and every mark
 records `window_px` alongside the usual coordinates so the session stays
-valid when the window moves. Every command speaks exit codes and JSON where a
+valid when the window moves. Freezing every screen stays the default;
+`--monitor` narrows it, `[capture] monitors` makes that permanent for a
+double-clicked launch, and `R` releases one display mid-session while the
+rest stay frozen. Every command speaks exit codes and JSON where a
 script would care — the complete reference with every flag is
 [docs/CLI.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CLI.md).
 
@@ -111,8 +117,13 @@ for a pixel loupe, `Esc` backs out / quits. Full table in
 | Linux (X11) | Supported — verified by hand on GNOME 46; every feature works |
 | Linux (Wayland) | Screen coordinates + `--pick` window marking — verified by hand on GNOME 46; no `windows` / `--target` (the protocol withholds window geometry) |
 
-Multi-monitor and mixed-DPI layouts are exercised by tests but not yet
-verified on real hardware. This table is kept honest — claims match runs.
+**Multi-monitor and mixed-DPI are now verified on real hardware**, on
+macOS: two displays at different scales (a 2x built-in and a 1x external
+sitting at a negative desktop origin), marks placed on both, and every
+coordinate recorded exactly where it was drawn. `find` relocated a region
+on the second display at a perfect score, and releasing one display left
+the other frozen and markable. Linux and Windows multi-monitor remain
+test-only. This table is kept honest — claims match runs.
 
 ## Acting on what you marked
 
