@@ -52,6 +52,16 @@ output.
   window-relative coordinates land where a click would.
 - Crops are clipped to the screen; a shape dragged against an edge crops
   to what was actually visible.
+- **`find` recognizes a display, it does not count them.** A session's
+  monitors are matched against the ones attached now by name, size and
+  scale — not by enumeration order, which shuffles across replugs,
+  reboots, and dock/undock. Unplug a display and put it back in a
+  different port and relocation still works. Two identical panels resolve
+  deterministically: the one that held the session's index if it is still
+  there, otherwise the lowest. What `find` will not do is relocate against
+  a display whose resolution or scale changed — template matching survives
+  a window moving, not the pixels underneath it being resampled — and it
+  says so in those words rather than claiming the display is unplugged.
 
 ## FAQ
 

@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::Parser;
 use pixelcoords_core::config::Config;
+use pixelcoords_core::session::MonitorMatch;
 
 use crate::capture::{CaptureProvider, NATIVE_COORD_SPACE, XcapCapture};
 
@@ -232,6 +233,61 @@ fn monitor_from_record(record: &pixelcoords_core::session::MonitorRecord) -> cap
     }
 }
 
+/// A live monitor in the shape `match_monitor` compares against — the same
+/// normalization the save path applies, so an attached display and the
+/// record written from it are directly comparable.
+fn record_from_monitor(monitor: &capture::MonitorInfo) -> pixelcoords_core::session::MonitorRecord {
+    pixelcoords_core::session::MonitorRecord {
+        index: monitor.index,
+        name: monitor.name.clone(),
+        primary: monitor.primary,
+        origin_px: monitor.origin_physical(),
+        size_px: monitor.size_physical(),
+        scale: monitor.scale,
+    }
+}
+
+/// Resolve one of a session's monitors against the displays attached now,
+/// or refuse with the reason. The two refusals are deliberately different
+/// sentences: a display that is *gone* sends the user to a cable, and one
+/// that *changed* sends them to display settings — the old shared message
+/// ("no longer attached") sent everyone to the cable.
+fn live_monitor_for<'a>(
+    record: &pixelcoords_core::session::MonitorRecord,
+    current: &'a [capture::MonitorInfo],
+    live: &[pixelcoords_core::session::MonitorRecord],
+) -> Result<&'a capture::MonitorInfo> {
+    match pixelcoords_core::session::match_monitor(record, live) {
+        MonitorMatch::Found(i) => Ok(&current[i]),
+        MonitorMatch::Changed(i) => {
+            let now = current[i].size_physical();
+            anyhow::bail!(
+                "{} changed since the session ({}x{} scale {} now, {}x{} scale {} then) — \
+                 relocation needs the same display setup",
+                record.name,
+                now.w,
+                now.h,
+                current[i].scale,
+                record.size_px.w,
+                record.size_px.h,
+                record.scale
+            )
+        }
+        MonitorMatch::Missing => {
+            let attached: Vec<&str> = current.iter().map(|m| m.name.as_str()).collect();
+            anyhow::bail!(
+                "the session's monitor {} ({}, {}x{} scale {}) is not attached — \
+                 attached now: {attached:?}",
+                record.index,
+                record.name,
+                record.size_px.w,
+                record.size_px.h,
+                record.scale
+            )
+        }
+    }
+}
+
 /// Re-locate every selection of a saved session in a fresh capture, using
 /// each selection's crop as its search template.
 fn run_find<P: CaptureProvider>(
@@ -264,6 +320,13 @@ fn run_find<P: CaptureProvider>(
     let dir = session_dir(path);
     let current = provider.monitors()?;
 
+    // Every attached display in the shape the matcher compares against.
+    // Built once: the loop below asks about each monitor the selections
+    // live on, and re-deriving this per iteration would be the same work
+    // repeated.
+    let live: Vec<pixelcoords_core::session::MonitorRecord> =
+        current.iter().map(record_from_monitor).collect();
+
     // One capture per monitor the session's selections live on, refused
     // up front when the display no longer matches the session: template
     // matching survives movement, not a resolution or DPI change.
@@ -273,27 +336,17 @@ fn run_find<P: CaptureProvider>(
         if frames.contains_key(&index) {
             continue;
         }
+        // The session-side lookup stays on the index: it addresses records
+        // *within* one session, where the index is the record's own
+        // identifier and cannot shuffle.
         let record = session
             .monitors
             .iter()
             .find(|m| m.index == index)
             .with_context(|| format!("the session does not describe monitor {index}"))?;
-        let monitor = current
-            .iter()
-            .find(|m| m.index == index)
-            .with_context(|| format!("monitor {index} is no longer attached"))?;
-        let size = monitor.size_physical();
-        anyhow::ensure!(
-            size == record.size_px && (monitor.scale - record.scale).abs() < f64::EPSILON,
-            "monitor {index} changed since the session ({}x{} scale {} now, {}x{} scale {} then) — \
-             relocation needs the same display setup",
-            size.w,
-            size.h,
-            monitor.scale,
-            record.size_px.w,
-            record.size_px.h,
-            record.scale
-        );
+        // The live lookup does not, because enumeration order shuffles
+        // across replugs and reboots. See `match_monitor`.
+        let monitor = live_monitor_for(record, &current, &live)?;
         let img = provider.capture(monitor)?;
         frames.insert(
             index,
