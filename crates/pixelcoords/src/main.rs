@@ -1083,23 +1083,28 @@ fn resolve_monitors(
             chosen.insert(position);
             continue;
         }
-        if let Ok(index) = query.parse::<usize>() {
-            let position = monitors
-                .iter()
-                .position(|m| m.index == index)
-                .with_context(|| {
-                    format!(
-                        "--monitor {index}: no monitor has that index — attached:\n{}",
-                        describe_monitors(&monitors)
-                    )
-                })?;
+        // A number is an index first: `--monitor 0` has always meant index
+        // 0 and must keep doing so. But an index nothing carries is free to
+        // be a name — and it has to be, because a backend may report names
+        // that are mostly digits ("Display #41054" on macOS), where the
+        // number is the only distinctive thing to type. Refusing those
+        // would make the most obvious query the one that cannot work.
+        let numeric = query.parse::<usize>().ok();
+        if let Some(index) = numeric
+            && let Some(position) = monitors.iter().position(|m| m.index == index)
+        {
             chosen.insert(position);
             continue;
         }
         let matches = pixelcoords_core::matcher::select_monitors(query, &names);
         anyhow::ensure!(
             !matches.is_empty(),
-            "--monitor {query:?}: no monitor name matches — attached:\n{}",
+            "--monitor {query:?}: {} — attached:\n{}",
+            if numeric.is_some() {
+                "no monitor has that index, and no name matches either"
+            } else {
+                "no monitor name matches"
+            },
             describe_monitors(&monitors)
         );
         // More than one match at the best rank is a question only the user
@@ -1557,6 +1562,39 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains('9'), "got: {err}");
+    }
+
+    /// Found on real hardware, not by a fake: macOS reports display names
+    /// like "Display #41054", so the digits are the most distinctive thing
+    /// to type — and they parsed as an index, failed to be one, and were
+    /// refused. An index nothing carries has to fall through to a name.
+    #[test]
+    fn a_numeric_query_that_is_no_index_is_tried_as_a_name() {
+        let display = |index: usize, id: &str| MonitorInfo {
+            index,
+            name: format!("Display #{id}"),
+            primary: index == 0,
+            origin: Point::new(0, 0),
+            size_native: Size::new(100, 60),
+            scale: 1.0,
+        };
+        let monitors = vec![display(0, "41054"), display(1, "15824")];
+
+        let by_name = resolve_monitors(&["41054".to_string()], monitors.clone()).unwrap();
+        assert_eq!(by_name.len(), 1);
+        assert_eq!(by_name[0].index, 0);
+
+        // An index that *does* exist still wins — `--monitor 1` cannot
+        // start meaning something else.
+        let by_index = resolve_monitors(&["1".to_string()], monitors.clone()).unwrap();
+        assert_eq!(by_index[0].index, 1);
+
+        // Neither reading works: say both were tried.
+        let err = resolve_monitors(&["99999".to_string()], monitors)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("no monitor has that index"), "got: {err}");
+        assert!(err.contains("no name matches either"), "got: {err}");
     }
 
     #[test]

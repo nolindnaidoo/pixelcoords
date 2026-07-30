@@ -32,11 +32,19 @@ same model are exactly that case; address them by index.
 `doctor` now says the name is addressable rather than leaving it as data
 on a line.
 
+A number is read as an index first — `--monitor 0` always means index 0 —
+and falls through to a name when nothing carries that index. That is not
+a nicety: macOS reports display names like `Display #41054`, so the digits
+are the only distinctive thing to type, and reading them strictly as an
+index made the most obvious query the one that could not work.
+
 **One honest limit:** the name is whatever the capture backend reports,
-and it is not always recognizable. On this project's macOS test machine it
-is `Display #41054`. X11 and Windows typically report the model. The index
-and `primary` work everywhere regardless, and `doctor` shows you what
-yours are called.
+and it is not always recognizable. Two displays on this project's macOS
+test machine came back as `Display #41054` and `Display #15824` — so they
+share the word `Display`, and matching on it is ambiguous rather than
+useful. X11 and Windows typically report the model. The index and
+`primary` work everywhere regardless, and `doctor` shows you what yours
+are called.
 
 `assert --monitor` is untouched and stays an index. It names a monitor
 *recorded in a session*, where the index is the record's own identifier —

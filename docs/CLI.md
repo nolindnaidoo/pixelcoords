@@ -38,6 +38,11 @@ Each `--monitor` value is one of three things:
 | `primary` | The display the OS marks primary — exactly one always is |
 | any other text | Part of a display's name: exact, then prefix, then substring, case-insensitive |
 
+A number is read as an index first, so `--monitor 0` always means index 0.
+If no monitor carries that index it is tried as a name instead — which
+matters on platforms whose display names are mostly digits, where the
+number is the only distinctive thing to type.
+
 Repeat the flag or separate with commas; the same display named twice is
 frozen once, and the set comes back in enumeration order regardless of the
 order you asked:
@@ -56,10 +61,13 @@ model are exactly this case — address them by index.
 
 **How useful a name is depends on your platform.** The name is whatever the
 capture backend reports, and that is not always something you would
-recognize: on this project's macOS test machine it comes back as
-`Display #41054`, while X11 and Windows typically report the model. Run
-`doctor` to see what yours are called — it lists them, and the index and
-`primary` work everywhere regardless.
+recognize: on this project's macOS test machine two displays came back as
+`Display #41054` and `Display #15824`, while X11 and Windows typically
+report the model. Note what that means for matching — every such name
+shares the word `Display`, so `--monitor Display` is ambiguous there and
+refuses; the digits are what actually distinguishes them. Run `doctor` to
+see what yours are called. The index and `primary` work everywhere
+regardless.
 
 ### Overlay controls
 
