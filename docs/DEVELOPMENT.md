@@ -126,8 +126,40 @@ Before every publish, walk this list — the ones with easy misses first:
 
 
 Versioning policy (also stated in [CHANGELOG.md](../CHANGELOG.md)):
-pre-1.0, **minor** for features and any CLI/schema break, **patch** for
-fixes; 1.0.0 when schema and CLI are declared stable.
+**minor** (0.x.0) for features and any CLI/schema break, **patch**
+(0.x.y) for fixes. There is no 1.0 on the plan — the version keeps
+incrementing through 0.x, and the stability a release offers is whatever
+its CHANGELOG entry says it offers.
+
+### How releases are grouped
+
+By **what a release does to the contract**, not by theme, and hardest
+first:
+
+- **The session schema does not move.** It has been version 1 since
+  0.1.0, and every planned feature is additive by construction — a new
+  optional field or a new optional top-level array, the same pattern
+  `platform`, `capture`, and `name` established. Old sessions keep
+  loading; old consumers ignore what they do not know.
+- **The CLI is the part that still moves**, so it goes first. 0.4.0 is
+  the agent surface: a design pass settles the vocabulary the three new
+  commands (`resolve`, `wait`, `diff`) share, then they land on it, plus
+  the one contract change to `assert`. Grouping them together is the
+  point — three commands answering the same question should not disagree
+  about timeouts, `--label`, or exit codes, and fixing that costs least
+  before any of them exist.
+- **0.5.0 is reach**: new emit targets and external image input. Both
+  add places the toolchain can point without changing what it already
+  says to callers.
+- **0.6.0 is overlay and marking polish** — color readout, the measure
+  tool, edge snapping, localization. It touches neither the schema nor
+  the CLI, so it can ship in any release; it is last because everything
+  ahead of it is something other tools depend on.
+
+A minor bump is cheap here, so nothing is held back for a number. What
+is *not* cheap is changing an answer callers already script against —
+which is why the shared-vocabulary work is grouped ahead of the commands
+that would inherit its mistakes.
 
 - Features land through issues → PRs (`Closes #N`), each writing its
   CHANGELOG entry under the upcoming version's heading in the same PR.
