@@ -18,6 +18,41 @@ means defaults; a missing `--config` file or invalid TOML is an error —
 pixelcoords never silently falls back. `pixelcoords doctor` reports which
 config is in effect and whether it parses.
 
+## Capture
+
+Which monitors a launch freezes when no `--monitor` flag is given.
+
+```toml
+[capture]
+monitors = "all"                    # the default
+# monitors = "primary"
+# monitors = ["DELL", "Built-in"]
+```
+
+Each value is a monitor query with the same grammar as
+[`--monitor`](CLI.md#choosing-monitors): an index, `primary`, or part of a
+display's name. `"all"` means every monitor, and only means that on its
+own — `["all", "DELL"]` is a contradiction and an error, not a resolution.
+
+This exists for the launch that has nowhere to put a flag: a
+double-clicked binary has no terminal, and before this its only option was
+freezing every screen. Set it once and every GUI launch honors it.
+
+**Precedence**, highest first:
+
+1. `--target` / `--pick`
+2. `--monitor`
+3. `[capture] monitors`
+4. every monitor
+
+A flag always beats the file — it never intersects with it.
+
+Nothing here degrades quietly. An empty value or an empty list is a config
+error, and a query naming no attached display fails the launch with the
+same message `--monitor` gives, rather than falling back to freezing
+everything. `pixelcoords doctor --config` reports the shape errors without
+launching.
+
 ## Style
 
 ```toml

@@ -8,6 +8,28 @@ the schema and CLI are declared stable.
 
 ## 0.3.0
 
+### `[capture] monitors`: a launch default for people without a terminal
+
+A double-clicked binary froze every screen, every time, with no way to say
+otherwise — no terminal to pass `--monitor` on, and a config file that
+carried style and hotkeys only. CLI users had an answer; GUI users had
+none.
+
+```toml
+[capture]
+monitors = "primary"        # or "all", or ["DELL", "Built-in"]
+```
+
+Same grammar as `--monitor`, so it is one thing to learn. Precedence is
+`--target`/`--pick`, then `--monitor`, then this, then every monitor — a
+flag always beats the file rather than intersecting with it.
+
+Nothing degrades quietly. An empty value or empty list is a config error,
+`["all", "DELL"]` is a contradiction rather than something to resolve, and
+a query naming no attached display fails the launch with the same message
+`--monitor` gives instead of falling back to freezing everything.
+`doctor --config` reports the shape errors without launching.
+
 ### `--monitor` takes a name, not just a number
 
 `--monitor` accepted one index. Indexes are enumeration order, so the only

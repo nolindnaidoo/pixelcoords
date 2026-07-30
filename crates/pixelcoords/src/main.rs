@@ -967,7 +967,7 @@ fn run_overlay(args: &cli::Cli) -> Result<()> {
 
     let provider = XcapCapture;
     let monitors = provider.monitors()?;
-    let (targets, target_record) = select_targets(args, &provider, monitors)?;
+    let (targets, target_record) = select_targets(args, &config, &provider, monitors)?;
 
     let mut frames = Vec::new();
     for monitor in targets {
@@ -1020,9 +1020,11 @@ fn run_overlay(args: &cli::Cli) -> Result<()> {
 }
 
 /// Which monitors to freeze, and the matched `--target` window if any.
-/// Guard-clause dispatch: `--target` wins, then `--monitor`, then all.
+/// Guard-clause dispatch: `--target` wins, then `--monitor`, then the
+/// config's `[capture] monitors`, then all. Flags always beat the file.
 fn select_targets<P: CaptureProvider>(
     args: &cli::Cli,
+    config: &Config,
     provider: &P,
     monitors: Vec<capture::MonitorInfo>,
 ) -> Result<(
@@ -1035,6 +1037,12 @@ fn select_targets<P: CaptureProvider>(
     }
     if !args.monitor.is_empty() {
         return Ok((resolve_monitors(&args.monitor, monitors)?, None));
+    }
+    // The double-clicked binary's only way to express a preference: no
+    // terminal, no flags, so the file is the whole vocabulary.
+    let configured = config.resolve_monitors()?;
+    if !configured.is_empty() {
+        return Ok((resolve_monitors(&configured, monitors)?, None));
     }
     Ok((monitors, None))
 }
@@ -1383,7 +1391,8 @@ fn captures_root(downloads: Option<PathBuf>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::{
-        config_path, load_config, resolve_monitors, resolve_target, select_targets, truncate,
+        Config, config_path, load_config, resolve_monitors, resolve_target, select_targets,
+        truncate,
     };
     use crate::capture::{
         CaptureProvider, FakeCapture, MonitorInfo, NATIVE_COORD_SPACE, WindowInfo, to_physical,
@@ -1474,21 +1483,24 @@ mod tests {
         let monitors = || provider.monitors().unwrap();
 
         let all = crate::cli::Cli::try_parse_from(["pixelcoords"]).unwrap();
-        let (targets, record) = select_targets(&all, &provider, monitors()).unwrap();
+        let (targets, record) =
+            select_targets(&all, &Config::default(), &provider, monitors()).unwrap();
         assert_eq!(targets.len(), 1); // FakeCapture has one monitor
         assert!(record.is_none());
 
         let one = crate::cli::Cli::try_parse_from(["pixelcoords", "--monitor", "0"]).unwrap();
-        let (targets, record) = select_targets(&one, &provider, monitors()).unwrap();
+        let (targets, record) =
+            select_targets(&one, &Config::default(), &provider, monitors()).unwrap();
         assert_eq!(targets[0].index, 0);
         assert!(record.is_none());
 
         let bad = crate::cli::Cli::try_parse_from(["pixelcoords", "--monitor", "9"]).unwrap();
-        assert!(select_targets(&bad, &provider, monitors()).is_err());
+        assert!(select_targets(&bad, &Config::default(), &provider, monitors()).is_err());
 
         let targeted =
             crate::cli::Cli::try_parse_from(["pixelcoords", "--target", "fake window"]).unwrap();
-        let (targets, record) = select_targets(&targeted, &provider, monitors()).unwrap();
+        let (targets, record) =
+            select_targets(&targeted, &Config::default(), &provider, monitors()).unwrap();
         assert_eq!(targets.len(), 1);
         let record = record.expect("target record");
         assert_eq!(record.origin_px, Point::new(10, 10));
@@ -1503,7 +1515,7 @@ mod tests {
         let monitors = || provider.monitors().unwrap();
         let select = |args: &[&str]| {
             let cli = crate::cli::Cli::try_parse_from(args).unwrap();
-            select_targets(&cli, &provider, monitors())
+            select_targets(&cli, &Config::default(), &provider, monitors())
                 .map(|(targets, _)| targets.into_iter().map(|m| m.index).collect::<Vec<_>>())
         };
 
@@ -1524,7 +1536,13 @@ mod tests {
         let provider = MixedDpi;
         let cli = crate::cli::Cli::try_parse_from(["pixelcoords", "--monitor", "retina,primary"])
             .unwrap();
-        let (targets, _) = select_targets(&cli, &provider, provider.monitors().unwrap()).unwrap();
+        let (targets, _) = select_targets(
+            &cli,
+            &Config::default(),
+            &provider,
+            provider.monitors().unwrap(),
+        )
+        .unwrap();
         let indices: Vec<usize> = targets.iter().map(|m| m.index).collect();
         assert_eq!(
             indices,
@@ -1538,7 +1556,13 @@ mod tests {
         let provider = MixedDpi;
         let cli = crate::cli::Cli::try_parse_from(["pixelcoords", "--monitor", "0,primary,Left"])
             .unwrap();
-        let (targets, _) = select_targets(&cli, &provider, provider.monitors().unwrap()).unwrap();
+        let (targets, _) = select_targets(
+            &cli,
+            &Config::default(),
+            &provider,
+            provider.monitors().unwrap(),
+        )
+        .unwrap();
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].index, 0);
     }
@@ -1547,9 +1571,14 @@ mod tests {
     fn a_monitor_query_that_matches_nothing_lists_what_is_attached() {
         let provider = MixedDpi;
         let cli = crate::cli::Cli::try_parse_from(["pixelcoords", "--monitor", "nope"]).unwrap();
-        let err = select_targets(&cli, &provider, provider.monitors().unwrap())
-            .unwrap_err()
-            .to_string();
+        let err = select_targets(
+            &cli,
+            &Config::default(),
+            &provider,
+            provider.monitors().unwrap(),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("Right Retina"), "got: {err}");
         assert!(err.contains("Left"), "got: {err}");
     }
@@ -1558,10 +1587,57 @@ mod tests {
     fn an_out_of_range_monitor_index_is_refused_by_number() {
         let provider = MixedDpi;
         let cli = crate::cli::Cli::try_parse_from(["pixelcoords", "--monitor", "9"]).unwrap();
-        let err = select_targets(&cli, &provider, provider.monitors().unwrap())
+        let err = select_targets(
+            &cli,
+            &Config::default(),
+            &provider,
+            provider.monitors().unwrap(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains('9'), "got: {err}");
+    }
+
+    /// `[capture] monitors` is the double-clicked binary's only voice — no
+    /// terminal, no flags — but a flag must still win when there is one.
+    #[test]
+    fn config_monitors_apply_when_no_flag_does_and_lose_when_one_does() {
+        let provider = MixedDpi;
+        let configured = |toml: &str| -> Config { ::toml::from_str(toml).expect("parses") };
+
+        let cfg = configured("[capture]\nmonitors = \"Right Retina\"\n");
+        let no_flags = crate::cli::Cli::try_parse_from(["pixelcoords"]).unwrap();
+        let (targets, _) =
+            select_targets(&no_flags, &cfg, &provider, provider.monitors().unwrap()).unwrap();
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].index, 1);
+
+        // The flag overrides the file, rather than intersecting with it.
+        let flagged =
+            crate::cli::Cli::try_parse_from(["pixelcoords", "--monitor", "primary"]).unwrap();
+        let (targets, _) =
+            select_targets(&flagged, &cfg, &provider, provider.monitors().unwrap()).unwrap();
+        assert_eq!(targets[0].index, 0);
+
+        // "all" in the file is the same as saying nothing.
+        let cfg_all = configured("[capture]\nmonitors = \"all\"\n");
+        let (targets, _) =
+            select_targets(&no_flags, &cfg_all, &provider, provider.monitors().unwrap()).unwrap();
+        assert_eq!(targets.len(), 2);
+    }
+
+    #[test]
+    fn a_config_monitor_that_matches_nothing_fails_the_launch() {
+        // The file is validated for shape in core; whether it names a real
+        // display can only be answered here, and it must not degrade to
+        // freeze-everything.
+        let provider = MixedDpi;
+        let cfg: Config = ::toml::from_str("[capture]\nmonitors = \"DELL\"\n").expect("parses");
+        let no_flags = crate::cli::Cli::try_parse_from(["pixelcoords"]).unwrap();
+        let err = select_targets(&no_flags, &cfg, &provider, provider.monitors().unwrap())
             .unwrap_err()
             .to_string();
-        assert!(err.contains('9'), "got: {err}");
+        assert!(err.contains("no monitor name matches"), "got: {err}");
     }
 
     /// Found on real hardware, not by a fake: macOS reports display names
