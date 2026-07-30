@@ -129,6 +129,34 @@ Versioning policy (also stated in [CHANGELOG.md](../CHANGELOG.md)):
 pre-1.0, **minor** for features and any CLI/schema break, **patch** for
 fixes; 1.0.0 when schema and CLI are declared stable.
 
+### The road to 1.0, and why it is shaped this way
+
+Releases are grouped by **what they do to the contract**, not by theme.
+Two things have to stop moving before 1.0, and only one of them is still
+moving:
+
+- **The session schema is effectively already stable.** It has been
+  version 1 since 0.1.0, and every planned feature is additive by
+  construction — a new optional field or a new optional top-level array,
+  the same pattern `platform`, `capture`, and `name` established. Old
+  sessions keep loading; old consumers ignore what they do not know.
+- **The CLI is what 1.0 is waiting on.** Three commands are still
+  unwritten and two existing ones still change shape. That work is
+  therefore grouped *first*, in 0.4.0, so the surface settles and gets
+  used before it is frozen — rather than changing right up to the release
+  that declares it stable.
+
+Which leaves overlay and marking polish — color readout, the measure
+tool, edge snapping, localization — touching neither. It goes **after**
+1.0, in 1.1.0. Holding features back for a pre-1.0 number does nothing
+except ship them under a version that implies breakage they do not cause;
+after 1.0 they are ordinary additive releases.
+
+One consequence worth stating plainly: **0.4.0 is the last release where
+breaking the existing CLI is free.** If `assert` and `find` disagree about
+what `--label` means — and today they do — that gets fixed there or lives
+forever.
+
 - Features land through issues → PRs (`Closes #N`), each writing its
   CHANGELOG entry under the upcoming version's heading in the same PR.
   The version in `Cargo.toml` does not move in feature PRs.
