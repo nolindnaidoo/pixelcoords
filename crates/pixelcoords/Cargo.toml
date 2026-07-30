@@ -1,6 +1,6 @@
 [package]
 name = "pixelcoords"
-description = "Freeze your screen, mark regions, get pixel-exact coordinates and crops"
+description = "Freeze your screen, mark regions, get pixel-exact coordinates and crops — a cross-platform screenshot and screen-capture CLI for macOS, Windows, and Linux (X11 and Wayland), HiDPI and multi-monitor aware"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,15 @@ homepage.workspace = true
 readme.workspace = true
 authors.workspace = true
 repository.workspace = true
-keywords.workspace = true
-categories.workspace = true
+# The tool's five slots, chosen against what each keyword page actually
+# contains rather than what the word means to us. `coordinates` and
+# `overlay` are gone: the first is owned by astronomy and geodesy crates,
+# the second by struct-patch and netlink. `screen-capture` replaces the
+# bare `capture` — the browse page is exact-match, but free-text search
+# splits the hyphen, so the compound wins both. `hidpi` is the one-crate
+# page next to winit's `dpi`, and mixed-DPI correctness is the whole point.
+keywords = ["screenshot", "screen-capture", "automation", "computer-use", "hidpi"]
+categories = ["command-line-utilities", "multimedia::images", "development-tools"]
 
 [dependencies]
 pixelcoords-core = { path = "../pixelcoords-core", version = "0.2.1" }

@@ -122,6 +122,25 @@ attached; a changed one keeps the honest "relocation needs the same
 display setup" refusal, because template matching survives a window
 moving, not the pixels underneath it being resampled.
 
+### crates.io metadata says what the crates are
+
+The binary and the library shared one set of keywords and categories,
+inherited from the workspace, and it fit neither. `pixelcoords-core` was
+filed under `command-line-utilities`, which it is not — it is a library
+with no CLI in it. Three of the five keywords pointed at the wrong
+audience entirely: `coordinates` on crates.io is astronomy and geodesy,
+`overlay` is struct patching and network overlays, and `capture` is mostly
+webcams.
+
+Each crate now carries its own. The binary keeps `screenshot` and takes
+`screen-capture`, `computer-use`, and `hidpi`; the library leads with
+`geometry`, `hidpi`, and `multi-monitor`, because the coordinate model is
+what someone building on it is looking for. Both descriptions now name the
+platforms and the DPI story, which is what a person scanning search
+results actually needs to know.
+
+No code changed, and nothing about the API or the CLI moved.
+
 ## 0.2.1
 
 Doc-only patch. `pixelcoords-core`'s install snippet said
