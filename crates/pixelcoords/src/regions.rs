@@ -8,7 +8,9 @@
 //! is the *refusals*. A display that is gone and a display that changed
 //! resolution are different sentences pointing at different fixes, and
 //! deriving them independently in four places is how one of them ends up
-//! saying the wrong one.
+//! saying the wrong one. The macOS screen-recording check sits inside
+//! `capture_frames` for the same reason: it is the only path to a frame,
+//! so no command can reach one without having passed the gate.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -110,6 +112,18 @@ pub fn capture_frames<P: CaptureProvider>(
     session: &SessionFile,
     regions: &[Region],
 ) -> Result<HashMap<usize, RgbaImage>> {
+    // The permission gate lives here rather than in each command, because
+    // this is the only place that captures: a command physically cannot
+    // reach a frame without passing it. The caller prefixes its own name
+    // when it prints, so this message carries none.
+    #[cfg(target_os = "macos")]
+    if !crate::mac::has_screen_capture_access() && !crate::mac::request_screen_capture_access() {
+        anyhow::bail!(
+            "screen recording permission denied — run `pixelcoords doctor` \
+             for instructions"
+        )
+    }
+
     let current = provider.monitors()?;
 
     // Every attached display in the shape the matcher compares against.
@@ -189,23 +203,4 @@ fn live_monitor_for<'a>(
             )
         }
     }
-}
-
-/// Refuse before capturing when macOS has not granted screen recording.
-/// Four commands capture now; four copies of this check is how one of
-/// them ends up without it.
-#[cfg(target_os = "macos")]
-pub fn ensure_capture_permission(command: &str) -> Result<()> {
-    if crate::mac::has_screen_capture_access() || crate::mac::request_screen_capture_access() {
-        return Ok(());
-    }
-    anyhow::bail!(
-        "pixelcoords {command}: screen recording permission denied — run \
-         `pixelcoords doctor` for instructions"
-    )
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn ensure_capture_permission(_command: &str) -> Result<()> {
-    Ok(())
 }

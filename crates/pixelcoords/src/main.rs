@@ -97,9 +97,7 @@ fn main() -> Result<()> {
             ref session,
             ref label,
         }) => {
-            let report = match regions::ensure_capture_permission("find")
-                .and_then(|()| run_find(&XcapCapture, session, label.as_deref()))
-            {
+            let report = match run_find(&XcapCapture, session, label.as_deref()) {
                 Ok(r) => r,
                 // 2, not 1: "a region was not found" and "the question was
                 // malformed" must stay distinguishable to a script.
