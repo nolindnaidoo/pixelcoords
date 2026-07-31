@@ -143,11 +143,12 @@ first:
   loading; old consumers ignore what they do not know.
 - **The CLI is the part that still moves**, so it goes first. 0.4.0 is
   the agent surface: a design pass settles the vocabulary the three new
-  commands (`resolve`, `wait`, `diff`) share, then they land on it, plus
-  the one contract change to `assert`. Grouping them together is the
-  point — three commands answering the same question should not disagree
-  about timeouts, `--label`, or exit codes, and fixing that costs least
-  before any of them exist.
+  commands (`resolve`, `wait`, `diff`) share — written down in
+  [The agent-surface contract](#the-agent-surface-contract) below — then
+  they land on it, plus the one contract change to `assert`. Grouping
+  them together is the point: three commands answering the same question
+  should not disagree about timeouts, `--label`, or exit codes, and
+  fixing that costs least before any of them exist.
 - **0.5.0 is reach**: new emit targets and external image input. Both
   add places the toolchain can point without changing what it already
   says to callers.
@@ -182,6 +183,114 @@ that would inherit its mistakes.
 - crates.io publish order matters: `cargo publish -p pixelcoords-core`
   first, then `-p pixelcoords` (the binary's dep pin must resolve).
   Publishes are manual and deliberate; nothing in CI publishes.
+
+## The agent-surface contract
+
+`assert`, `find`, `resolve`, `wait`, and `diff` all answer one class of
+question — *what is true on screen right now?* — over the same
+primitives. This is the vocabulary they share. It is written here rather
+than in [CLI.md](CLI.md) on purpose: CLI.md describes the surface that
+exists, and a contract is agreed before the code that honors it. New
+commands in this family are reviewed against this section.
+
+### `--label` restricts the set. `--expect` is a success criterion
+
+`--label` selects **which regions a command operates on**, everywhere it
+appears. An unknown label is exit 2, listing the labels the session
+carries.
+
+`assert` is the one command asking about a *point* rather than a set, so
+"which label counts as a hit" is a different question and gets a
+different word: **`--expect`**. That split is what lets a miss keep
+reporting every region the point *did* land in — the thing that makes
+`assert` useful for scoring a trajectory rather than just failing it.
+
+`assert --label` used to mean what `--expect` means now. For one release
+it is refused outright, naming the new flag, rather than quietly
+switching to the set meaning: a rename a script notices is cheap, and a
+silent change of meaning is not. It comes back as an ordinary set filter
+one release later.
+
+### `--space` is an origin. `--units` is a scale. Neither is universal
+
+- `--space` — `global | monitor | window`. Which origin a coordinate is
+  measured from.
+- `--units` — `physical | logical | auto`. `auto` is what the platform's
+  input APIs expect: logical points on macOS, physical pixels on Windows
+  and X11.
+
+Orthogonal as vocabulary; that does not mean every command carries both:
+
+| command | `--space` | `--units` | why |
+|---------|-----------|-----------|-----|
+| `resolve` | yes | yes | the only command emitting a point to act on |
+| `assert` | yes | no | its point is input, and stays physical |
+| `emit` | no | no | each format *defines* its units |
+| `find` | no | no | reports session-space shapes |
+| `wait` | no | no | reports scores |
+| `diff` | no | no | reports pixel counts; its bbox is provenance |
+
+`emit` is worth stating outright: `cliclick` is logical, `xdotool` is
+physical, and pyautogui branches on platform. A `--units` override there
+would let a caller generate code that is provably wrong for the tool it
+targets — the exact failure this project exists to prevent.
+
+`--units` describes output only. A logical *input* point at scale 2.0
+covers a 2×2 physical block, and no rounding rule makes "hit" or "miss"
+the right answer, so `assert --point` is physical and says so.
+
+### One envelope, one schema counter
+
+Every machine-readable document in this family is:
+
+```json
+{ "schema": 2, "command": "find", "captured_utc": "…", "ok": true, "results": [] }
+```
+
+`captured_utc` is absent when the command does not capture. `ok` is the
+**aggregate** — and row-level answers stay on the rows: `Verdict.hit` and
+`FindResult.found` do not move up, because `assert --stdin` returns one
+verdict per input line and a per-line answer is the whole point.
+
+One counter (`report::CLI_SCHEMA_VERSION`) covers all of them. It starts
+at 2 because the two counters it replaced were both at 1 and these
+documents do not have that shape. `doctor` and `windows` keep their own
+`json!` documents; they answer a different kind of question and are not
+part of this surface.
+
+### Exit codes: 0, 1, 2
+
+**0** success, hit, found, condition met. **1** a negative answer — miss,
+not found, over tolerance, timed out. **2** the question was malformed.
+
+A `wait` timeout is **1**. It is a negative answer, not a broken
+question, and a script must be able to tell those apart without parsing
+stderr.
+
+### Durations: one integer, one unit
+
+`500ms`, `30s`, `2m`. No bare numbers, no decimals, no compounds
+(`1m30s`), no uppercase — strict parsing per
+[AGENTS.md](../AGENTS.md), so a bad duration names the accepted
+spellings instead of silently defaulting. `0s` parses; whether a
+command accepts zero is that command's rule.
+
+### `--min-score` and `--tolerance` are not synonyms
+
+- **`--min-score`** — a normalized correlation score in `0..=1`. Used by
+  `wait`; `find`'s `SCORE_FLOOR` (0.9) is the same quantity.
+- **`--tolerance`** — a percentage of masked pixels allowed to differ.
+  Used by `diff`, default 0.
+
+Different units, different directions, different defaults. They must
+never share a word.
+
+One consequence worth knowing before choosing between them: NCC is
+brightness- and contrast-normalized, so a region that changes *uniformly*
+— a dimming backdrop, auto-brightness, a luminance-only theme switch —
+still scores ~1.0. `wait --for change` will not fire on it. A caller who
+means "any pixel differs" wants `diff --tolerance 0`, which compares RGB
+directly.
 
 ## Repository governance
 
