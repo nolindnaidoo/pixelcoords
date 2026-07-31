@@ -161,27 +161,12 @@ fn click_targets(
     if session.selections.is_empty() {
         return Err(EmitError::NoSelections);
     }
-    let wanted: Vec<(usize, &SelectionRecord)> = session
-        .selections
-        .iter()
-        .enumerate()
-        .filter(|(_, record)| label.is_none_or(|wanted| record.label.eq_ignore_ascii_case(wanted)))
-        .collect();
+    let wanted = crate::session::select_by_label(session, label);
     if wanted.is_empty() {
         // Only a label filter can empty a non-empty session.
-        let mut available: Vec<String> = Vec::new();
-        for record in &session.selections {
-            let known = record.label.is_empty()
-                || available
-                    .iter()
-                    .any(|l| l.eq_ignore_ascii_case(&record.label));
-            if !known {
-                available.push(record.label.clone());
-            }
-        }
         return Err(EmitError::UnknownLabel {
             requested: label.unwrap_or_default().to_string(),
-            available,
+            available: crate::session::distinct_labels(session.selections.iter()),
         });
     }
     wanted

@@ -5,6 +5,7 @@ mod cli;
 mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
+mod regions;
 mod render;
 mod save;
 mod state;
@@ -17,7 +18,6 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::Parser;
 use pixelcoords_core::config::Config;
-use pixelcoords_core::session::MonitorMatch;
 
 use crate::capture::{CaptureProvider, NATIVE_COORD_SPACE, XcapCapture};
 
@@ -97,15 +97,9 @@ fn main() -> Result<()> {
             ref session,
             ref label,
         }) => {
-            #[cfg(target_os = "macos")]
-            if !mac::has_screen_capture_access() && !mac::request_screen_capture_access() {
-                eprintln!(
-                    "pixelcoords find: screen recording permission denied — run \
-                     `pixelcoords doctor` for instructions"
-                );
-                std::process::exit(2)
-            }
-            let report = match run_find(&XcapCapture, session, label.as_deref()) {
+            let report = match regions::ensure_capture_permission("find")
+                .and_then(|()| run_find(&XcapCapture, session, label.as_deref()))
+            {
                 Ok(r) => r,
                 // 2, not 1: "a region was not found" and "the question was
                 // malformed" must stay distinguishable to a script.
@@ -233,61 +227,6 @@ fn monitor_from_record(record: &pixelcoords_core::session::MonitorRecord) -> cap
     }
 }
 
-/// A live monitor in the shape `match_monitor` compares against — the same
-/// normalization the save path applies, so an attached display and the
-/// record written from it are directly comparable.
-fn record_from_monitor(monitor: &capture::MonitorInfo) -> pixelcoords_core::session::MonitorRecord {
-    pixelcoords_core::session::MonitorRecord {
-        index: monitor.index,
-        name: monitor.name.clone(),
-        primary: monitor.primary,
-        origin_px: monitor.origin_physical(),
-        size_px: monitor.size_physical(),
-        scale: monitor.scale,
-    }
-}
-
-/// Resolve one of a session's monitors against the displays attached now,
-/// or refuse with the reason. The two refusals are deliberately different
-/// sentences: a display that is *gone* sends the user to a cable, and one
-/// that *changed* sends them to display settings — the old shared message
-/// ("no longer attached") sent everyone to the cable.
-fn live_monitor_for<'a>(
-    record: &pixelcoords_core::session::MonitorRecord,
-    current: &'a [capture::MonitorInfo],
-    live: &[pixelcoords_core::session::MonitorRecord],
-) -> Result<&'a capture::MonitorInfo> {
-    match pixelcoords_core::session::match_monitor(record, live) {
-        MonitorMatch::Found(i) => Ok(&current[i]),
-        MonitorMatch::Changed(i) => {
-            let now = current[i].size_physical();
-            anyhow::bail!(
-                "{} changed since the session ({}x{} scale {} now, {}x{} scale {} then) — \
-                 relocation needs the same display setup",
-                record.name,
-                now.w,
-                now.h,
-                current[i].scale,
-                record.size_px.w,
-                record.size_px.h,
-                record.scale
-            )
-        }
-        MonitorMatch::Missing => {
-            let attached: Vec<&str> = current.iter().map(|m| m.name.as_str()).collect();
-            anyhow::bail!(
-                "the session's monitor {} ({}, {}x{} scale {}) is not attached — \
-                 attached now: {attached:?}",
-                record.index,
-                record.name,
-                record.size_px.w,
-                record.size_px.h,
-                record.scale
-            )
-        }
-    }
-}
-
 /// Re-locate every selection of a saved session in a fresh capture, using
 /// each selection's crop as its search template.
 fn run_find<P: CaptureProvider>(
@@ -298,97 +237,41 @@ fn run_find<P: CaptureProvider>(
     use pixelcoords_core::locate;
 
     let session = load_session(path)?;
-    anyhow::ensure!(
-        !session.selections.is_empty(),
-        "the session has no selections to find"
-    );
-    let wanted: Vec<usize> = (0..session.selections.len())
-        .filter(|&i| label.is_none_or(|l| session.selections[i].label.eq_ignore_ascii_case(l)))
-        .collect();
-    if wanted.is_empty() {
-        let labels: Vec<&str> = session
-            .selections
-            .iter()
-            .map(|s| s.label.as_str())
-            .filter(|l| !l.is_empty())
-            .collect();
-        anyhow::bail!(
-            "no selection is labeled {:?}; labels in this session: {labels:?}",
-            label.unwrap_or_default()
-        );
-    }
-    let dir = session_dir(path);
-    let current = provider.monitors()?;
+    let regions = regions::load(&session, &session_dir(path), label)?;
+    let frames = regions::capture_frames(provider, &session, &regions)?;
 
-    // Every attached display in the shape the matcher compares against.
-    // Built once: the loop below asks about each monitor the selections
-    // live on, and re-deriving this per iteration would be the same work
-    // repeated.
-    let live: Vec<pixelcoords_core::session::MonitorRecord> =
-        current.iter().map(record_from_monitor).collect();
-
-    // One capture per monitor the session's selections live on, refused
-    // up front when the display no longer matches the session: template
-    // matching survives movement, not a resolution or DPI change.
-    let mut frames: std::collections::HashMap<usize, locate::GrayImage> =
-        std::collections::HashMap::new();
-    for index in wanted.iter().map(|&i| session.selections[i].monitor) {
-        if frames.contains_key(&index) {
-            continue;
-        }
-        // The session-side lookup stays on the index: it addresses records
-        // *within* one session, where the index is the record's own
-        // identifier and cannot shuffle.
-        let record = session
-            .monitors
-            .iter()
-            .find(|m| m.index == index)
-            .with_context(|| format!("the session does not describe monitor {index}"))?;
-        // The live lookup does not, because enumeration order shuffles
-        // across replugs and reboots. See `match_monitor`.
-        let monitor = live_monitor_for(record, &current, &live)?;
-        let img = provider.capture(monitor)?;
-        frames.insert(
-            index,
-            locate::GrayImage::from_rgba(img.width() as usize, img.height() as usize, img.as_raw()),
-        );
-    }
-
-    let relocations: Vec<(usize, locate::Relocation)> = wanted
-        .iter()
-        .map(|&index| {
-            let record = &session.selections[index];
-            let crop_path = dir.join(&record.crop);
-            let img = image::open(&crop_path)
-                .with_context(|| format!("reading crop {}", crop_path.display()))?
-                .to_rgba8();
-            let template = locate::Template::from_rgba(
-                img.width() as usize,
-                img.height() as usize,
-                img.as_raw(),
-            );
-            let monitor = session
-                .monitors
-                .iter()
-                .find(|m| m.index == record.monitor)
-                .expect("verified while capturing frames");
-            let origin =
-                locate::crop_origin(&record.px, record.rot_deg.unwrap_or(0), monitor.size_px);
-            let frame = &frames[&record.monitor];
-            Ok((
-                index,
-                locate::Relocation {
-                    crop_origin: origin,
-                    outcome: locate::locate(frame, &template, Some(origin)),
-                },
-            ))
+    // Grayscale once per frame, not once per selection: several regions
+    // routinely share a monitor. Consumed rather than borrowed so each
+    // captured frame is freed as it is converted — on three 4K displays,
+    // holding both representations at once would double peak memory for
+    // no reason, since matching never looks at colour.
+    let gray: std::collections::HashMap<usize, locate::GrayImage> = frames
+        .into_iter()
+        .map(|(index, img)| {
+            let (w, h) = (img.width() as usize, img.height() as usize);
+            (index, locate::GrayImage::from_rgba(w, h, img.as_raw()))
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect();
+
+    let attempts: Vec<(usize, &pixelcoords_core::session::SelectionRecord, _)> = regions
+        .iter()
+        .map(|region| {
+            let frame = &gray[&region.monitor];
+            (
+                region.index,
+                region.record,
+                locate::Relocation {
+                    crop_origin: region.origin,
+                    outcome: locate::locate(frame, &region.template(), Some(region.origin)),
+                },
+            )
+        })
+        .collect();
 
     let captured = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .context("formatting timestamp")?;
-    Ok(locate::report(&session, &relocations, captured))
+    Ok(locate::report(&attempts, captured))
 }
 
 /// One saved session the resume picker can offer.

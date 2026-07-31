@@ -139,7 +139,7 @@ pub fn assess(
         if !known {
             return Err(VerdictError::UnknownLabel {
                 requested: wanted.to_string(),
-                available: distinct_labels(&candidates),
+                available: candidate_labels(&candidates),
             });
         }
     }
@@ -221,23 +221,11 @@ fn candidates(
     }
 }
 
-/// The labels a `--label` filter could have matched, deduplicated in
-/// session order; unlabeled selections contribute nothing.
-fn distinct_labels(candidates: &[Candidate]) -> Vec<String> {
-    let mut labels: Vec<String> = Vec::new();
-    for c in candidates {
-        if c.record.label.is_empty() {
-            continue;
-        }
-        if labels
-            .iter()
-            .any(|l| l.eq_ignore_ascii_case(&c.record.label))
-        {
-            continue;
-        }
-        labels.push(c.record.label.clone());
-    }
-    labels
+/// The labels a `--label` filter could have matched: those among the
+/// candidates this space admits, not the whole session — a monitor-space
+/// question cannot be answered by a selection on another monitor.
+fn candidate_labels(candidates: &[Candidate]) -> Vec<String> {
+    crate::session::distinct_labels(candidates.iter().map(|c| c.record))
 }
 
 /// The closest region the miss was measured against: the labeled ones when
