@@ -162,6 +162,12 @@ jq -r '.selections[0].px | "\(.x + .w/2),\(.y + .h/2)"' session.json
 The schema is versioned: additions are optional fields, and any breaking
 change bumps `"schema"`.
 
+`session.json`'s `schema` counts separately from the one on command
+output. The session format is still at 1 and has been since 0.1.0; the
+commands share their own counter, now at 2. They version different
+things — a file on disk and an answer on stdout — and tying them together
+would force a session-format bump every time a report gained a field.
+
 ### Picked-window sessions (`--pick`, Linux)
 
 A session captured through the desktop portal's window picker contains
@@ -182,42 +188,58 @@ and computer-use agents, scored against regions a human marked once.
 
 ```bash
 pixelcoords assert --session shots --point 812,440
-pixelcoords assert --session shots --point 812,440 --label submit
+pixelcoords assert --session shots --point 812,440 --expect submit
 pixelcoords assert --session shots --point 100,50 --space window
 pixelcoords assert --session shots --point 15,25 --space monitor --monitor 1
 ```
 
-The exit code is the API: **0** the point hit (a region with `--label`'s
-label when given, any region otherwise), **1** it missed, **2** the
-question was malformed — unreadable session, unknown label, window space
-on an untargeted session. `--space` says which stored coordinates the
-point is in: `global` (default, `global_px`), `monitor` (`px`; `--monitor`
-picks which, optional on single-monitor sessions), or `window`
-(`window_px`, `--target` sessions only). Labels match case-insensitively.
+The exit code is the API: **0** the point hit (the `--expect` region when
+given, any region otherwise), **1** it missed, **2** the question was
+malformed — unreadable session, unknown label, window space on an
+untargeted session. `--space` says which stored coordinates the point is
+in: `global` (default, `global_px`), `monitor` (`px`; `--monitor` picks
+which, optional on single-monitor sessions), or `window` (`window_px`,
+`--target` sessions only). Labels match case-insensitively. The point is
+always in **physical pixels** — there is no `--units` here, because a
+logical input point at scale 2.0 covers a 2×2 physical block and no
+rounding rule makes "hit" or "miss" the honest answer.
 
-Stdout is a JSON verdict, itself versioned:
+Stdout is the shared report envelope, holding one verdict:
 
 ```json
 {
-  "schema": 1,
-  "point": { "x": 812, "y": 440 },
-  "space": "global",
-  "hit": false,
-  "contained_in": [
-    { "index": 0, "label": "cancel", "shape": "rect", "monitor": 0 }
-  ],
-  "nearest": {
-    "region": { "index": 2, "label": "submit", "shape": "rect", "monitor": 0 },
-    "bbox_distance_px": 42.5
-  }
+  "schema": 2,
+  "command": "assert",
+  "ok": false,
+  "results": [
+    {
+      "point": { "x": 812, "y": 440 },
+      "space": "global",
+      "hit": false,
+      "contained_in": [
+        { "index": 0, "label": "cancel", "shape": "rect", "monitor": 0 }
+      ],
+      "nearest": {
+        "region": { "index": 2, "label": "submit", "shape": "rect", "monitor": 0 },
+        "bbox_distance_px": 42.5
+      }
+    }
+  ]
 }
 ```
 
+No `captured_utc`: scoring a point is pure session math, and stamping a
+time on it would imply a capture that never happened.
+
+`ok` is the aggregate the exit code mirrors; `hit` is this row's own
+answer. They agree for a single point and stop agreeing the moment a
+command answers about several, which is why both exist.
+
 `contained_in` lists every region holding the point in stacking order
-(last is topmost) — a labeled miss still shows what the point *did* land
-in. `nearest` appears only on misses: the closest relevant region and the
-distance in pixels to its rotated bounding box, for partial-credit
-scoring. Points are tested with the same geometry the overlay draws —
+(last is topmost) — a miss against `--expect` still shows what the point
+*did* land in. `nearest` appears only on misses: the closest relevant
+region and the distance in pixels to its rotated bounding box, for
+partial-credit scoring. Points are tested with the same geometry the overlay draws —
 circle boundaries inclusive, rotated rects as their rotated silhouette,
 triangles by their edges rather than their bounding box.
 
@@ -268,9 +290,10 @@ missing crop file, or a display that changed since the capture).
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
+  "command": "find",
   "captured_utc": "2026-07-27T14:02:11Z",
-  "all_relocated": true,
+  "ok": true,
   "results": [
     {
       "index": 0, "label": "submit", "monitor": 0,

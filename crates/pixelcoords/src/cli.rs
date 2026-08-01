@@ -98,8 +98,13 @@ pub enum Command {
         /// The point to test, as X,Y physical pixels
         #[arg(long, value_name = "X,Y", allow_hyphen_values = true)]
         point: String,
-        /// Count only regions with this label (case-insensitive) as hits
+        /// The label the point must land in for a hit (case-insensitive).
+        /// A miss still reports every region it *did* land in
         #[arg(long, value_name = "TEXT")]
+        expect: Option<String>,
+        /// Accepted only to refuse it: this flag changed meaning, and
+        /// silently doing the other thing would be worse than an error
+        #[arg(long, value_name = "TEXT", hide = true)]
         label: Option<String>,
         /// Coordinate space the point is in
         #[arg(long, value_enum, default_value_t = SpaceArg::Global)]
