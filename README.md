@@ -38,10 +38,17 @@ mark regions with real shapes — rectangles, ellipses, triangles, N-gons,
 freehand — rotated, labeled, and placed to the exact pixel with a loupe
 and arrow-key nudging. What you mark becomes data, not a picture:
 versioned JSON in physical pixels with per-monitor DPI scale, labeled
-crops and frame-sized cutouts, ready-to-paste click code for your
-automation stack, point verification with exit codes for CI and
-computer-use agents, and self-healing re-location when the UI drifts out
-from under your coordinates. Sessions reopen and edit like documents.
+crops and frame-sized cutouts, and ready-to-paste click code for your
+automation stack.
+
+Then it answers the questions a machine actually asks about that data —
+each with an exit code and one JSON shape, so CI and computer-use agents
+can script them. Did this click land in the right region, for one point
+or a whole trajectory. Where do I click *now*, in the units my input API
+wants, on the display it's actually on. Wait until this dialog is back.
+Do these regions still look right. Where did this region move to when the
+UI drifted out from under my coordinates. Sessions reopen and edit like
+documents.
 
 No account, no network, no toolkit — one small native binary for macOS,
 Windows, and Linux. MIT-licensed, because the aim was to build the best
@@ -75,11 +82,21 @@ pixelcoords                      # screen freezes; drag shapes, A labels, S save
 # → Downloads/pixelcoords-captures/<timestamp>/
 #   session.json  screenshot-0.png  cutout-primary-0.png  cutout-inverse-0.png  crop-0-submit.png
 
-pixelcoords assert --session <dir> --point 812,440 --label submit
+pixelcoords assert --session <dir> --point 812,440 --expect submit
 # exit 0: that point is inside the region you labeled "submit"
+# --stdin scores a whole trajectory in one process, one point per line
+
+pixelcoords resolve --session <dir> --label submit --units auto
+# where to click, right now, in the units your input API actually wants
 
 pixelcoords emit --session <dir> --format pyautogui
 # ready-to-paste click code, coordinate conventions already handled
+
+pixelcoords wait --session <dir> --label dialog --for match
+# block until that region is back on screen; exit 1 if it never arrives
+
+pixelcoords diff --session <dir> --against baseline/
+# did those regions still look right? visual regression, per region
 
 pixelcoords find --session <dir>
 # the UI moved? every region re-located by its saved crop, deltas included

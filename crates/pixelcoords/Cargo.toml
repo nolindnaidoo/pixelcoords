@@ -20,7 +20,7 @@ keywords = ["screenshot", "screen-capture", "automation", "computer-use", "hidpi
 categories = ["command-line-utilities", "multimedia::images", "development-tools"]
 
 [dependencies]
-pixelcoords-core = { path = "../pixelcoords-core", version = "0.3.0" }
+pixelcoords-core = { path = "../pixelcoords-core", version = "0.4.0" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"

@@ -7,7 +7,7 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
-## Unreleased
+## 0.4.0
 
 ### `wait`: block until the screen settles
 
@@ -211,6 +211,13 @@ rather than reinterpreted because the alternative is a script that still
 runs, still exits 0 or 1, and quietly asks a different question. It comes
 back on `assert` with the set-restricting meaning next release, which is
 an addition rather than a second break.
+
+### Two `find` messages, said the way the other commands say them
+
+Four commands now share one loader, so `find`'s wording had to stop being
+its own. Its empty-session message drops "to find", and its unknown-label
+list is deduplicated case-insensitively the way `emit`'s and `assert`'s
+always were. Neither changes an exit code or a document.
 
 ### The library
 

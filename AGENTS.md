@@ -18,9 +18,11 @@ overlay over a live app) is a possible later addition for Windows/macOS/X11
 ## Layout
 
 - `crates/pixelcoords-core` — pure logic: geometry, selections, session
-  schema, point verdicts, code emitters, template relocation, hotkey
-  grammar, config, strings table, embedded vector font (fontdue), CPU
-  rasterizer. **Zero
+  schema, coordinate spaces and units, the shared report envelope, point
+  verdicts, click-point resolution, region diffing, wait conditions,
+  template relocation, code emitters, the point-stream and duration
+  parsers, hotkey grammar, config, strings table, embedded vector font
+  (fontdue), CPU rasterizer. **Zero
   platform deps, `#![forbid(unsafe_code)]`, everything unit-tested.** If a
   platform type (winit, xcap, Win32) appears in this crate, that is a bug.
 - `crates/pixelcoords` — the binary: winit event loop, softbuffer

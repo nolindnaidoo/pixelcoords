@@ -1,6 +1,6 @@
 [package]
 name = "pixelcoords-core"
-description = "Platform-free core of pixelcoords: screen geometry, HiDPI and multi-monitor coordinate spaces, the session.json schema, template relocation, point verdicts, and click-code emitters. Cross-platform (macOS, Windows, Linux), no unsafe"
+description = "Platform-free core of pixelcoords: screen geometry, HiDPI and multi-monitor coordinate spaces, the session.json schema, template relocation, point verdicts, click-point resolution, region diffing, and click-code emitters. Cross-platform (macOS, Windows, Linux), no unsafe"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
