@@ -9,6 +9,7 @@
 #![forbid(unsafe_code)]
 
 pub mod config;
+pub mod diff;
 pub mod draw;
 pub mod emit;
 pub mod font;

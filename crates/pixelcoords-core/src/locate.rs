@@ -54,6 +54,11 @@ fn luma(r: u8, g: u8, b: u8) -> f32 {
     (0.299 * f32::from(r) + 0.587 * f32::from(g) + 0.114 * f32::from(b)) / 255.0
 }
 
+/// The alpha at or above which a crop pixel counts as inside its
+/// shape. Public because `diff` must apply the identical rule — two
+/// definitions of "inside" could silently drift apart.
+pub const MASK_ALPHA_FLOOR: u8 = 128;
+
 /// A crop as a search template: luma plus a mask excluding the transparent
 /// pixels a circle, triangle, or rotated-rect crop carries outside its
 /// shape.
@@ -67,7 +72,10 @@ impl Template {
     /// From RGBA8 bytes; pixels with alpha below half are masked out.
     pub fn from_rgba(w: usize, h: usize, rgba: &[u8]) -> Self {
         let gray = GrayImage::from_rgba(w, h, rgba);
-        let mask = rgba.chunks_exact(4).map(|p| p[3] >= 128).collect();
+        let mask = rgba
+            .chunks_exact(4)
+            .map(|p| p[3] >= MASK_ALPHA_FLOOR)
+            .collect();
         Self { gray, mask }
     }
 }

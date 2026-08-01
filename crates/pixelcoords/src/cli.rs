@@ -11,6 +11,7 @@ Examples:
   pixelcoords assert --session <dir> --stdin < points.txt
   pixelcoords resolve --session <dir> --label submit --units auto
   pixelcoords emit --session <dir> --format pyautogui
+  pixelcoords diff --session <dir> --against baseline
   pixelcoords find --session <dir>
   pixelcoords doctor --json
 
@@ -186,6 +187,26 @@ pub enum Command {
         /// describes where the region is now rather than where it was
         #[arg(long)]
         relocate: bool,
+    },
+    /// Compare a session's regions against the screen now, or against
+    /// stored artifacts: prints a JSON report; exits 0 when every region
+    /// is within tolerance, 1 otherwise, 2 on error
+    Diff {
+        /// Path to a session.json, or the directory containing one
+        #[arg(long, value_name = "PATH")]
+        session: PathBuf,
+        /// Compare against another session's screenshots, or a single PNG
+        /// standing in for a one-monitor session's capture, instead of
+        /// capturing the screen
+        #[arg(long, value_name = "DIR|IMAGE")]
+        against: Option<PathBuf>,
+        /// Compare only selections with this label (case-insensitive)
+        #[arg(long, value_name = "TEXT")]
+        label: Option<String>,
+        /// Percent of a region's masked pixels allowed to differ before
+        /// it fails. Default 0 — exact
+        #[arg(long, value_name = "PCT", default_value_t = 0.0)]
+        tolerance: f64,
     },
     /// Re-locate a session's regions in a fresh capture using their saved
     /// crops: prints a JSON report; exits 0 when every region is found
