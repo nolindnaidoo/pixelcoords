@@ -7,6 +7,68 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
+## Unreleased
+
+### Breaking: one JSON envelope for every command that scores
+
+`assert` and `find` printed differently shaped documents with separate
+schema counters, both sitting at 1. Three more commands are being written
+against the same primitives, and left alone each would have invented a
+third shape — so a script reading two of them would need two parsers, and
+five eventually.
+
+They now share one envelope: `schema`, `command`, `captured_utc` when the
+command actually captured, `ok`, and `results`. `find`'s `all_relocated`
+is now `ok`. `assert`'s verdict became a row inside `results` and lost its
+own `schema`, since the document carries the version.
+
+`ok` is the **aggregate** the exit code mirrors, and it did not swallow
+the per-row answers: `FindResult.found` and `Verdict.hit` stay where they
+are. For a single point the two agree, which is exactly why the
+distinction is easy to lose — and it stops being true the moment a command
+answers about more than one region, which batch scoring will.
+
+The counter starts at **2**, not 1: the two it replaces were both at 1,
+and a consumer pinned to either would otherwise see a version it
+recognizes on a shape it does not. `session.json` keeps its own counter,
+still 1 — a file on disk and an answer on stdout version different
+things.
+
+`doctor` and `windows` are unchanged. They report on the machine rather
+than on a session.
+
+### Breaking: `assert --label` is now `assert --expect`
+
+`--label` meant two different things depending on the command. In `find`
+and `emit` it restricts *which regions the command looks at*; in `assert`
+it decided *which region counted as a hit* while still reporting every
+region the point landed in. Two of three commands agreed, and three more
+were about to be written.
+
+`--label` now means restrict-the-set everywhere. `assert`'s success
+criterion is `--expect`, which keeps the behavior that makes it useful: a
+miss still lists what the point *did* land in, so scoring a click tells
+you it hit "cancel" instead of only that it missed "submit".
+
+`assert --label` exits 2 with a message naming `--expect`. It is refused
+rather than reinterpreted because the alternative is a script that still
+runs, still exits 0 or 1, and quietly asks a different question. It comes
+back on `assert` with the set-restricting meaning next release, which is
+an addition rather than a second break.
+
+### The library
+
+`verdict::PointSpace` is now `space::Origin`, in a new `space` module
+alongside `Units` (`physical`/`logical`/`auto`) and `logical_of`. An
+origin says where `(0, 0)` is; units say whether a step is a device pixel
+or a logical point. They were one concept in the CLI's `--space` flag and
+are two questions, and the commands being written next have to ask both.
+`emit::Platform` moved there too and is re-exported, so `emit`'s own API
+is unchanged.
+
+`locate::FindReport` is now `report::Report<FindResult>`;
+`locate::all_relocated` computes the aggregate.
+
 ## 0.3.0
 
 ### `R` releases one display and keeps the rest frozen

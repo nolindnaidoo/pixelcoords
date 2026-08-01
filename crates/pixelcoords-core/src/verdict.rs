@@ -12,31 +12,7 @@ use thiserror::Error;
 
 use crate::geometry::{Point, Rect, Shape, ToolKind};
 use crate::session::{SelectionRecord, SessionFile};
-
-pub const VERDICT_SCHEMA_VERSION: u32 = 1;
-
-/// The coordinate space an incoming point is expressed in. Each maps to the
-/// coordinates the session already stores; nothing is derived at test time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PointSpace {
-    /// Global desktop physical pixels (`global_px`).
-    Global,
-    /// Monitor-local physical pixels (`px`) of the given monitor index.
-    Monitor(usize),
-    /// Physical pixels relative to the target window's top-left
-    /// (`window_px`); needs a `--target` session.
-    Window,
-}
-
-impl PointSpace {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Global => "global",
-            Self::Monitor(_) => "monitor",
-            Self::Window => "window",
-        }
-    }
-}
+use crate::space::Origin;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum VerdictError {
@@ -59,11 +35,15 @@ pub enum VerdictError {
     NoCandidates(&'static str),
 }
 
-/// The result of testing one point, ready to serialize as the `assert`
-/// subcommand's JSON output.
+/// The result of testing one point: one row of `assert`'s output.
+///
+/// Carries no `schema` of its own — it is a row inside
+/// [`crate::report::Report`], which versions the document. `hit` stays
+/// here rather than rising to the envelope's `ok`, because a batch run
+/// answers per line and a caller scoring a trajectory needs to know
+/// *which* click missed.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Verdict {
-    pub schema: u32,
     pub point: Point,
     pub space: &'static str,
     /// The monitor index the point is local to; present only in monitor
@@ -72,7 +52,7 @@ pub struct Verdict {
     pub monitor: Option<usize>,
     pub hit: bool,
     /// Every region containing the point, in session (stacking) order —
-    /// last is topmost. A miss against `--label` still lists what the
+    /// last is topmost. A miss against `--expect` still lists what the
     /// point *did* land in.
     pub contained_in: Vec<RegionRef>,
     /// Present on a miss: the closest relevant region, for partial credit.
@@ -119,20 +99,24 @@ impl Candidate<'_> {
     }
 }
 
-/// Test `point` against the session's regions. `label` restricts what
-/// counts as a hit to selections carrying that label (ASCII
-/// case-insensitive, matching the window matcher's behavior).
+/// Test `point` against the session's regions.
+///
+/// `expect` names the label that has to be hit for `hit` to be true — the
+/// `--expect` flag, not `--label`. It deliberately does *not* filter what
+/// gets reported: `contained_in` still lists every region the point landed
+/// in, so a miss tells you what you hit instead of merely that you missed.
+/// Matching is ASCII case-insensitive, as the window matcher is.
 pub fn assess(
     session: &SessionFile,
     point: Point,
-    space: PointSpace,
-    label: Option<&str>,
+    space: Origin,
+    expect: Option<&str>,
 ) -> Result<Verdict, VerdictError> {
     let candidates = candidates(session, space)?;
     if candidates.is_empty() {
         return Err(VerdictError::NoCandidates(space.label()));
     }
-    if let Some(wanted) = label {
+    if let Some(wanted) = expect {
         let known = candidates
             .iter()
             .any(|c| c.record.label.eq_ignore_ascii_case(wanted));
@@ -148,7 +132,7 @@ pub fn assess(
         .iter()
         .filter(|c| c.shape.hit_test_rotated(c.rot_deg(), point))
         .collect();
-    let hit = label.map_or(!contained.is_empty(), |wanted| {
+    let hit = expect.map_or(!contained.is_empty(), |wanted| {
         contained
             .iter()
             .any(|c| c.record.label.eq_ignore_ascii_case(wanted))
@@ -156,14 +140,13 @@ pub fn assess(
     let nearest = if hit {
         None
     } else {
-        nearest_relevant(&candidates, point, label)
+        nearest_relevant(&candidates, point, expect)
     };
     Ok(Verdict {
-        schema: VERDICT_SCHEMA_VERSION,
         point,
         space: space.label(),
         monitor: match space {
-            PointSpace::Monitor(index) => Some(index),
+            Origin::Monitor(index) => Some(index),
             _ => None,
         },
         hit,
@@ -174,20 +157,17 @@ pub fn assess(
 
 /// The selections testable in `space`, each carrying the shape already
 /// stored for that space.
-fn candidates(
-    session: &SessionFile,
-    space: PointSpace,
-) -> Result<Vec<Candidate<'_>>, VerdictError> {
+fn candidates(session: &SessionFile, space: Origin) -> Result<Vec<Candidate<'_>>, VerdictError> {
     let records = session.selections.iter().enumerate();
     match space {
-        PointSpace::Global => Ok(records
+        Origin::Global => Ok(records
             .map(|(index, record)| Candidate {
                 index,
                 record,
                 shape: record.global_px.clone(),
             })
             .collect()),
-        PointSpace::Monitor(wanted) => {
+        Origin::Monitor(wanted) => {
             let available: Vec<usize> = session.monitors.iter().map(|m| m.index).collect();
             if !available.contains(&wanted) {
                 return Err(VerdictError::UnknownMonitor {
@@ -204,7 +184,7 @@ fn candidates(
                 })
                 .collect())
         }
-        PointSpace::Window => {
+        Origin::Window => {
             if session.target.is_none() {
                 return Err(VerdictError::NoTarget);
             }
@@ -221,9 +201,9 @@ fn candidates(
     }
 }
 
-/// The labels a `--label` filter could have matched: those among the
-/// candidates this space admits, not the whole session — a monitor-space
-/// question cannot be answered by a selection on another monitor.
+/// The labels `--expect` could have named: those among the candidates
+/// this space admits, not the whole session — a monitor-space question
+/// cannot be answered by a selection on another monitor.
 fn candidate_labels(candidates: &[Candidate]) -> Vec<String> {
     crate::session::distinct_labels(candidates.iter().map(|c| c.record))
 }
@@ -233,11 +213,11 @@ fn candidate_labels(candidates: &[Candidate]) -> Vec<String> {
 fn nearest_relevant(
     candidates: &[Candidate],
     point: Point,
-    label: Option<&str>,
+    expect: Option<&str>,
 ) -> Option<Nearest> {
     candidates
         .iter()
-        .filter(|c| label.is_none_or(|wanted| c.record.label.eq_ignore_ascii_case(wanted)))
+        .filter(|c| expect.is_none_or(|wanted| c.record.label.eq_ignore_ascii_case(wanted)))
         .map(|c| Nearest {
             region: c.region_ref(),
             bbox_distance_px: bbox_distance(c.shape.rotated_bbox(c.rot_deg()), point),
@@ -311,11 +291,11 @@ mod tests {
             &[labeled(Shape::Rect(Rect::new(10, 20, 30, 40)), 1, "submit")],
             None,
         );
-        let hit = assess(&file, Point::new(1935, 25), PointSpace::Global, None).unwrap();
+        let hit = assess(&file, Point::new(1935, 25), Origin::Global, None).unwrap();
         assert!(hit.hit);
         assert_eq!(hit.contained_in[0].label, "submit");
         assert!(hit.nearest.is_none());
-        let miss = assess(&file, Point::new(15, 25), PointSpace::Global, None).unwrap();
+        let miss = assess(&file, Point::new(15, 25), Origin::Global, None).unwrap();
         assert!(!miss.hit);
     }
 
@@ -328,7 +308,7 @@ mod tests {
             ],
             None,
         );
-        let v = assess(&file, Point::new(15, 25), PointSpace::Monitor(1), None).unwrap();
+        let v = assess(&file, Point::new(15, 25), Origin::Monitor(1), None).unwrap();
         assert!(v.hit);
         assert_eq!(v.monitor, Some(1));
         // Both monitors hold an identical local rect; only monitor 1's is
@@ -340,7 +320,7 @@ mod tests {
     #[test]
     fn unknown_monitor_is_an_error_naming_the_real_ones() {
         let file = session(&[labeled(Shape::Rect(Rect::new(0, 0, 5, 5)), 0, "a")], None);
-        let err = assess(&file, Point::new(0, 0), PointSpace::Monitor(7), None).unwrap_err();
+        let err = assess(&file, Point::new(0, 0), Origin::Monitor(7), None).unwrap_err();
         assert_eq!(
             err,
             VerdictError::UnknownMonitor {
@@ -353,14 +333,14 @@ mod tests {
     #[test]
     fn monitor_with_no_selections_is_no_candidates_not_a_miss() {
         let file = session(&[labeled(Shape::Rect(Rect::new(0, 0, 5, 5)), 0, "a")], None);
-        let err = assess(&file, Point::new(2, 2), PointSpace::Monitor(1), None).unwrap_err();
+        let err = assess(&file, Point::new(2, 2), Origin::Monitor(1), None).unwrap_err();
         assert_eq!(err, VerdictError::NoCandidates("monitor"));
     }
 
     #[test]
     fn window_space_needs_a_target_session() {
         let file = session(&[labeled(Shape::Rect(Rect::new(0, 0, 5, 5)), 0, "a")], None);
-        let err = assess(&file, Point::new(2, 2), PointSpace::Window, None).unwrap_err();
+        let err = assess(&file, Point::new(2, 2), Origin::Window, None).unwrap_err();
         assert_eq!(err, VerdictError::NoTarget);
     }
 
@@ -381,7 +361,7 @@ mod tests {
             Some(target),
         );
         // Window-relative: the rect sits at (100, 50) from the window origin.
-        let v = assess(&file, Point::new(110, 55), PointSpace::Window, None).unwrap();
+        let v = assess(&file, Point::new(110, 55), Origin::Window, None).unwrap();
         assert!(v.hit);
         assert_eq!(v.contained_in.len(), 1);
         assert_eq!(v.contained_in[0].label, "on target");
@@ -396,13 +376,7 @@ mod tests {
             ],
             None,
         );
-        let v = assess(
-            &file,
-            Point::new(10, 10),
-            PointSpace::Global,
-            Some("SUBMIT"),
-        )
-        .unwrap();
+        let v = assess(&file, Point::new(10, 10), Origin::Global, Some("SUBMIT")).unwrap();
         // The point is inside "Cancel", so the verdict is a labeled miss
         // that still reports what was actually hit — and how far the
         // wanted region is.
@@ -413,13 +387,7 @@ mod tests {
         assert_eq!(nearest.region.label, "Submit");
         assert!(nearest.bbox_distance_px > 0.0);
 
-        let hit = assess(
-            &file,
-            Point::new(210, 10),
-            PointSpace::Global,
-            Some("submit"),
-        )
-        .unwrap();
+        let hit = assess(&file, Point::new(210, 10), Origin::Global, Some("submit")).unwrap();
         assert!(hit.hit);
     }
 
@@ -433,7 +401,7 @@ mod tests {
             ],
             None,
         );
-        let err = assess(&file, Point::new(0, 0), PointSpace::Global, Some("send")).unwrap_err();
+        let err = assess(&file, Point::new(0, 0), Origin::Global, Some("send")).unwrap_err();
         // Case-insensitive duplicates collapse; the unlabeled one is not
         // offered.
         assert_eq!(
@@ -448,7 +416,7 @@ mod tests {
     #[test]
     fn empty_session_is_no_candidates() {
         let file = session(&[], None);
-        let err = assess(&file, Point::new(0, 0), PointSpace::Global, None).unwrap_err();
+        let err = assess(&file, Point::new(0, 0), Origin::Global, None).unwrap_err();
         assert_eq!(err, VerdictError::NoCandidates("global"));
     }
 
@@ -459,10 +427,10 @@ mod tests {
         sel.rot_deg = 90;
         let file = session(&[sel], None);
         let inside_rotated = Point::new(28, 27);
-        let v = assess(&file, inside_rotated, PointSpace::Global, None).unwrap();
+        let v = assess(&file, inside_rotated, Origin::Global, None).unwrap();
         assert!(v.hit, "point inside the rotated silhouette must hit");
         let inside_unrotated_only = Point::new(45, 15);
-        let v = assess(&file, inside_unrotated_only, PointSpace::Global, None).unwrap();
+        let v = assess(&file, inside_unrotated_only, Origin::Global, None).unwrap();
         assert!(
             !v.hit,
             "the axis-aligned box no longer applies once rotated"
@@ -500,18 +468,18 @@ mod tests {
         // On the circle's rim (inclusive), inside the triangle, and in each
         // shape's bbox corner — which its geometry excludes.
         assert!(
-            assess(&file, Point::new(60, 50), PointSpace::Global, None)
+            assess(&file, Point::new(60, 50), Origin::Global, None)
                 .unwrap()
                 .hit
         );
         assert!(
-            assess(&file, Point::new(200, 150), PointSpace::Global, None)
+            assess(&file, Point::new(200, 150), Origin::Global, None)
                 .unwrap()
                 .hit
         );
-        let circle_corner = assess(&file, Point::new(41, 41), PointSpace::Global, None).unwrap();
+        let circle_corner = assess(&file, Point::new(41, 41), Origin::Global, None).unwrap();
         assert!(!circle_corner.hit);
-        let tri_corner = assess(&file, Point::new(151, 101), PointSpace::Global, None).unwrap();
+        let tri_corner = assess(&file, Point::new(151, 101), Origin::Global, None).unwrap();
         assert!(!tri_corner.hit);
     }
 
@@ -524,7 +492,7 @@ mod tests {
             ],
             None,
         );
-        let v = assess(&file, Point::new(10, 10), PointSpace::Global, None).unwrap();
+        let v = assess(&file, Point::new(10, 10), Origin::Global, None).unwrap();
         let labels: Vec<&str> = v.contained_in.iter().map(|r| r.label.as_str()).collect();
         assert_eq!(labels, ["below", "above"]);
         assert_eq!(v.contained_in[1].index, 1);
@@ -537,7 +505,7 @@ mod tests {
             None,
         );
         // 3 left of x=10, 4 above y=10: a 3-4-5 triangle.
-        let v = assess(&file, Point::new(7, 6), PointSpace::Global, None).unwrap();
+        let v = assess(&file, Point::new(7, 6), Origin::Global, None).unwrap();
         assert!(!v.hit);
         let nearest = v.nearest.unwrap();
         assert_eq!(nearest.region.label, "box");
@@ -552,7 +520,7 @@ mod tests {
         let mut sel = Selection::new(Shape::Rect(Rect::new(10, 10, 40, 10)), 0);
         sel.rot_deg = 90;
         let file = session(&[sel], None);
-        let v = assess(&file, Point::new(40, 0), PointSpace::Global, None).unwrap();
+        let v = assess(&file, Point::new(40, 0), Origin::Global, None).unwrap();
         assert!(!v.hit);
         // The rotated bbox reaches x=35 at y=0; distance is 40-34=6 in x
         // per half-open inclusion, 0 in y — well under the unrotated
@@ -570,9 +538,12 @@ mod tests {
             &[labeled(Shape::Rect(Rect::new(10, 10, 20, 20)), 0, "box")],
             None,
         );
-        let hit = assess(&file, Point::new(15, 15), PointSpace::Global, None).unwrap();
+        let hit = assess(&file, Point::new(15, 15), Origin::Global, None).unwrap();
         let json = serde_json::to_value(&hit).unwrap();
-        assert_eq!(json["schema"], 1);
+        assert!(
+            json.get("schema").is_none(),
+            "a verdict is a row; report::Report versions the document"
+        );
         assert_eq!(json["space"], "global");
         assert_eq!(json["hit"], true);
         assert_eq!(json["point"]["x"], 15);
@@ -580,7 +551,7 @@ mod tests {
         assert!(json.get("monitor").is_none(), "global space has no monitor");
         assert!(json.get("nearest").is_none(), "hits carry no nearest");
 
-        let miss = assess(&file, Point::new(500, 500), PointSpace::Monitor(0), None).unwrap();
+        let miss = assess(&file, Point::new(500, 500), Origin::Monitor(0), None).unwrap();
         let json = serde_json::to_value(&miss).unwrap();
         assert_eq!(json["space"], "monitor");
         assert_eq!(json["monitor"], 0);
@@ -589,8 +560,8 @@ mod tests {
 
     #[test]
     fn space_labels_name_their_own_space() {
-        assert_eq!(PointSpace::Global.label(), "global");
-        assert_eq!(PointSpace::Monitor(3).label(), "monitor");
-        assert_eq!(PointSpace::Window.label(), "window");
+        assert_eq!(Origin::Global.label(), "global");
+        assert_eq!(Origin::Monitor(3).label(), "monitor");
+        assert_eq!(Origin::Window.label(), "window");
     }
 }

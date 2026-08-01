@@ -14,6 +14,13 @@ Exit codes are the API everywhere: **0** success/hit/found, **1**
 miss/not-found/unhealthy, **2** the question was malformed — a script can
 always tell a negative answer from a broken invocation.
 
+Every machine-readable answer shares one envelope — `schema`, `command`,
+`captured_utc` when the command captured, an aggregate `ok` mirroring the
+exit code, and `results`. Per-region answers stay on the rows, so a
+report tells you *which* region failed, not merely that one did. The
+contract behind it is written up in
+[DEVELOPMENT.md](DEVELOPMENT.md#the-agent-surface-contract).
+
 ## `pixelcoords` (the overlay)
 
 Freezes the screen and opens the marking overlay.
@@ -153,16 +160,25 @@ Set (or clear, with `""`) a session's friendly name. Rewrites only
 ## `assert`
 
 Score a point against a saved session's regions. Exit 0 hit, 1 miss,
-2 malformed. Stdout is a versioned JSON verdict (misses report the
-nearest region and its distance).
+2 malformed. Stdout is a versioned JSON report whose single result is the
+verdict (misses report the nearest region and its distance).
 
 | Flag | Meaning |
 |------|---------|
 | `--session <PATH>` | The session |
 | `--point <X,Y>` | The point (negatives allowed) |
-| `--label <TEXT>` | Only this label counts as a hit (case-insensitive) |
+| `--expect <TEXT>` | The label the point must land in for a hit (case-insensitive) |
 | `--space global\|monitor\|window` | Which stored coordinates the point is in (default `global`) |
 | `--monitor <N>` | The monitor for `--space monitor` — an **index only**, and a different flag from the overlay's `--monitor` above. This one names a monitor *recorded in the session*, where the index is the record's own identifier; the overlay's picks a display attached right now |
+
+`--expect` used to be spelled `--label`, and it does **not** filter the
+report: a miss still lists every region the point did land in, which is
+what makes `assert` useful for scoring a click rather than just failing
+it. `--label` now means "restrict which regions a command looks at" on
+every command that has it, so `assert --label` exits 2 and names
+`--expect`. It comes back on `assert` with the set-restricting meaning in
+the next release; erroring for one release is what stops a script from
+silently changing what it asks.
 
 ## `emit`
 

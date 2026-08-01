@@ -18,9 +18,8 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::geometry::{Point, Shape, Size};
+use crate::report::{Command, Report};
 use crate::session::SelectionRecord;
-
-pub const FIND_SCHEMA_VERSION: u32 = 1;
 
 /// Matches scoring below this are reported not found. Normalized
 /// cross-correlation is 1.0 for a pixel-identical region; anti-aliasing
@@ -399,14 +398,14 @@ pub struct FindResult {
     pub delta: Option<Delta>,
 }
 
-/// The `find` subcommand's JSON output.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct FindReport {
-    pub schema: u32,
-    pub captured_utc: String,
-    /// Every selection was found, unambiguously.
-    pub all_relocated: bool,
-    pub results: Vec<FindResult>,
+/// Every selection was found, unambiguously — `find`'s aggregate, which
+/// becomes the report's `ok` and the process's exit code.
+///
+/// An empty result set is *not* success: `find` was asked about regions
+/// and answered about none.
+#[must_use]
+pub fn all_relocated(results: &[FindResult]) -> bool {
+    !results.is_empty() && results.iter().all(|r| r.found && !r.ambiguous)
 }
 
 /// Assemble the report from the attempted selections — the whole session
@@ -421,7 +420,7 @@ pub struct FindReport {
 pub fn report(
     attempts: &[(usize, &SelectionRecord, Relocation)],
     captured_utc: String,
-) -> FindReport {
+) -> Report<FindResult> {
     let results: Vec<FindResult> = attempts
         .iter()
         .map(|(index, record, reloc)| {
@@ -462,13 +461,8 @@ pub fn report(
             }
         })
         .collect();
-    let all_relocated = !results.is_empty() && results.iter().all(|r| r.found && !r.ambiguous);
-    FindReport {
-        schema: FIND_SCHEMA_VERSION,
-        captured_utc,
-        all_relocated,
-        results,
-    }
+    let ok = all_relocated(&results);
+    Report::captured(Command::Find, captured_utc, ok, results)
 }
 
 #[cfg(test)]
@@ -716,7 +710,7 @@ mod tests {
             )],
             "2026-07-27T01:00:00Z".into(),
         );
-        assert!(found.all_relocated);
+        assert!(found.ok);
         let r = &found.results[0];
         assert_eq!(r.delta, Some(Delta { dx: 4, dy: -12 }));
         assert_eq!(r.new_px, Some(Shape::Rect(Rect::new(14, 8, 30, 40))));
@@ -743,7 +737,7 @@ mod tests {
             )],
             "t".into(),
         );
-        assert!(!miss.all_relocated);
+        assert!(!miss.ok);
         assert!(!miss.results[0].found);
         assert!(miss.results[0].new_px.is_none());
 
@@ -764,7 +758,7 @@ mod tests {
             )],
             "t".into(),
         );
-        assert!(!ambiguous.all_relocated);
+        assert!(!ambiguous.ok);
         assert!(ambiguous.results[0].found && ambiguous.results[0].ambiguous);
         assert!(
             ambiguous.results[0].new_px.is_none(),
@@ -782,7 +776,7 @@ mod tests {
             )],
             "t".into(),
         );
-        assert!(!errored.all_relocated);
+        assert!(!errored.ok);
         assert!(
             errored.results[0]
                 .reason
@@ -813,11 +807,17 @@ mod tests {
             "2026-07-27T01:00:00Z".into(),
         );
         let json = serde_json::to_value(&rep).unwrap();
-        assert_eq!(json["schema"], 1);
-        assert_eq!(json["all_relocated"], true);
+        assert_eq!(json["schema"], 2);
+        assert_eq!(json["command"], "find");
+        assert_eq!(json["captured_utc"], "2026-07-27T01:00:00Z");
+        assert_eq!(json["ok"], true, "all_relocated is spelled ok now");
         assert_eq!(json["results"][0]["label"], "submit");
         assert_eq!(json["results"][0]["delta"]["dx"], 0);
         assert_eq!(json["results"][0]["new_px"]["x"], 10);
         assert!(json["results"][0].get("reason").is_none());
+        assert!(
+            json["results"][0]["found"].as_bool().unwrap(),
+            "the row keeps its own answer; ok is the aggregate over rows"
+        );
     }
 }

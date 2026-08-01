@@ -150,30 +150,39 @@ refuse, because acting on the wrong instance is worse than not acting.
 
 `Template` carries an optional mask, so non-rectangular regions match on
 the pixels the human actually marked instead of the bounding box.
-`report()` assembles a `FindReport` — the same JSON `pixelcoords find`
-prints, with per-label `Delta` values, so you can tell what moved and by
-how much.
+`report()` assembles a `Report<FindResult>` — the same JSON `pixelcoords
+find` prints, with per-label `Delta` values, so you can tell what moved
+and by how much.
+
+`report::Report<T>` is the envelope every scoring command shares:
+`schema`, `command`, `captured_utc`, an aggregate `ok`, and the rows.
+Row-level answers stay on the rows — `FindResult::found`,
+`Verdict::hit` — because a caller usually needs to know *which* one
+failed, not merely that one did.
 
 ## Did this point land in the right place?
 
 `verdict::assess` answers that in whichever space your point already is
-— `PointSpace::Global`, `PointSpace::Monitor(i)`, or `PointSpace::Window`
-for `--target` sessions.
+— `Origin::Global`, `Origin::Monitor(i)`, or `Origin::Window` for
+`--target` sessions. An origin says where `(0, 0)` is; `space::Units`
+answers the separate question of whether a coordinate is in device pixels
+or logical points.
 
 ```rust
 use pixelcoords_core::geometry::Point;
 use pixelcoords_core::session::SessionFile;
-use pixelcoords_core::verdict::{PointSpace, assess};
+use pixelcoords_core::space::Origin;
+use pixelcoords_core::verdict::assess;
 
 # fn main() -> Result<(), Box<dyn std::error::Error>> {
 # let session: SessionFile = serde_json::from_str(EXAMPLE_SESSION)?;
-let verdict = assess(&session, Point::new(850, 440), PointSpace::Global, None)?;
+let verdict = assess(&session, Point::new(850, 440), Origin::Global, None)?;
 
 assert!(verdict.hit);
 assert_eq!(verdict.contained_in[0].label, "submit");
 
 // A miss still reports what you nearly hit, and how far off you were.
-let miss = assess(&session, Point::new(1600, 440), PointSpace::Global, None)?;
+let miss = assess(&session, Point::new(1600, 440), Origin::Global, None)?;
 assert!(!miss.hit);
 assert_eq!(miss.nearest.expect("a nearest region").region.label, "submit");
 # Ok(())

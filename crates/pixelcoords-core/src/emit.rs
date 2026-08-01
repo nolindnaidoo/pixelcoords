@@ -17,21 +17,21 @@ use thiserror::Error;
 
 use crate::geometry::Point;
 use crate::session::{SelectionRecord, SessionFile};
+use crate::space::{Resolved, logical_of};
+
+/// The OS the snippet will run on. Only pyautogui branches on it — the
+/// other tools each exist on a single platform.
+///
+/// Re-exported from [`crate::space`], where it now lives: "which OS is
+/// this coordinate for" is the same question `--units auto` asks, and one
+/// answer serves both.
+pub use crate::space::Platform;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmitFormat {
     Pyautogui,
     Cliclick,
     Xdotool,
-}
-
-/// The OS the snippet will run on. Only pyautogui branches on it — the
-/// other tools each exist on a single platform.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Platform {
-    MacOs,
-    Windows,
-    Linux,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -48,13 +48,6 @@ pub enum EmitError {
          session does not describe"
     )]
     UnknownMonitor { selection: usize, monitor: usize },
-}
-
-/// The units a target tool expects its coordinates in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Units {
-    Physical,
-    Logical,
 }
 
 /// One click the snippet will perform.
@@ -84,11 +77,11 @@ fn pyautogui(
     label: Option<&str>,
 ) -> Result<String, EmitError> {
     let (units, space_note) = match platform {
-        Platform::MacOs => (Units::Logical, "logical points (macOS)"),
+        Platform::MacOs => (Resolved::Logical, "logical points (macOS)"),
         // pyautogui makes its process DPI-aware on import, so it addresses
         // true physical pixels on Windows.
-        Platform::Windows => (Units::Physical, "physical pixels (Windows)"),
-        Platform::Linux => (Units::Physical, "physical pixels (X11)"),
+        Platform::Windows => (Resolved::Physical, "physical pixels (Windows)"),
+        Platform::Linux => (Resolved::Physical, "physical pixels (X11)"),
     };
     let targets = click_targets(session, units, label)?;
     let mut out = header("#", session, space_note);
@@ -105,7 +98,7 @@ fn pyautogui(
 }
 
 fn cliclick(session: &SessionFile, label: Option<&str>) -> Result<String, EmitError> {
-    let targets = click_targets(session, Units::Logical, label)?;
+    let targets = click_targets(session, Resolved::Logical, label)?;
     let mut out = header("#", session, "logical points (macOS)");
     for t in targets {
         let _ = writeln!(
@@ -129,7 +122,7 @@ fn cliclick_coord(v: i32) -> String {
 }
 
 fn xdotool(session: &SessionFile, label: Option<&str>) -> Result<String, EmitError> {
-    let targets = click_targets(session, Units::Physical, label)?;
+    let targets = click_targets(session, Resolved::Physical, label)?;
     let mut out = header("#", session, "physical pixels (X11)");
     for t in targets {
         let _ = writeln!(
@@ -155,7 +148,7 @@ fn header(prefix: &str, session: &SessionFile, space_note: &str) -> String {
 /// each selection independently.
 fn click_targets(
     session: &SessionFile,
-    units: Units,
+    units: Resolved,
     label: Option<&str>,
 ) -> Result<Vec<Target>, EmitError> {
     if session.selections.is_empty() {
@@ -177,8 +170,8 @@ fn click_targets(
             // `rot_deg` cannot move it; triangles store rotation baked.
             let physical = record.global_px.click_point();
             let point = match units {
-                Units::Physical => physical,
-                Units::Logical => to_logical(session, index, record, physical)?,
+                Resolved::Physical => physical,
+                Resolved::Logical => to_logical(session, index, record, physical)?,
             };
             Ok(Target {
                 comment: describe(index, record),
@@ -188,9 +181,9 @@ fn click_targets(
         .collect()
 }
 
-/// `global_px` divided by the selection's monitor scale. Monitor origins
-/// were scaled by that same per-monitor factor when the session was
-/// written, so the division inverts cleanly even across mixed DPI.
+/// `global_px` through the selection's own monitor scale. The lookup and
+/// its error stay here; the arithmetic is `space::logical_of`, shared
+/// with every other command that has to answer the same question.
 fn to_logical(
     session: &SessionFile,
     index: usize,
@@ -205,10 +198,7 @@ fn to_logical(
             selection: index,
             monitor: record.monitor,
         })?;
-    Ok(Point::new(
-        (f64::from(physical.x) / monitor.scale).round() as i32,
-        (f64::from(physical.y) / monitor.scale).round() as i32,
-    ))
+    Ok(logical_of(physical, monitor.scale))
 }
 
 fn describe(index: usize, record: &SelectionRecord) -> String {

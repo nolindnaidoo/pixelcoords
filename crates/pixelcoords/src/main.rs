@@ -64,10 +64,23 @@ fn main() -> Result<()> {
         Some(cli::Command::Assert {
             ref session,
             ref point,
+            ref expect,
             ref label,
             space,
             monitor,
-        }) => assert_command(session, point, label.as_deref(), space, monitor),
+        }) => {
+            if label.is_some() {
+                eprintln!(
+                    "pixelcoords assert: --label changed meaning in this release. \
+                     Use --expect NAME for the old behavior — the region the point \
+                     must land in. --label now restricts which regions a command \
+                     looks at, matching find and emit, and assert accepts it with \
+                     that meaning in the next release."
+                );
+                std::process::exit(2)
+            }
+            assert_command(session, point, expect.as_deref(), space, monitor)
+        }
         Some(cli::Command::Emit {
             ref session,
             format,
@@ -107,7 +120,7 @@ fn main() -> Result<()> {
                 }
             };
             println!("{}", serde_json::to_string_pretty(&report)?);
-            if report.all_relocated {
+            if report.ok {
                 return Ok(());
             }
             std::process::exit(1)
@@ -231,7 +244,7 @@ fn run_find<P: CaptureProvider>(
     provider: &P,
     path: &std::path::Path,
     label: Option<&str>,
-) -> Result<pixelcoords_core::locate::FindReport> {
+) -> Result<pixelcoords_core::report::Report<pixelcoords_core::locate::FindResult>> {
     use pixelcoords_core::locate;
 
     let session = load_session(path)?;
@@ -494,19 +507,25 @@ fn emit_snippet(
 fn assert_command(
     session: &std::path::Path,
     point: &str,
-    label: Option<&str>,
+    expect: Option<&str>,
     space: cli::SpaceArg,
     monitor: Option<usize>,
 ) -> Result<()> {
-    let verdict = match assess_session(session, point, label, space, monitor) {
+    use pixelcoords_core::report::{Command, Report};
+
+    let verdict = match assess_session(session, point, expect, space, monitor) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("pixelcoords assert: {e:#}");
             std::process::exit(2)
         }
     };
-    println!("{}", serde_json::to_string_pretty(&verdict)?);
-    if verdict.hit {
+    // No `captured_utc`: scoring a point is pure session math, and
+    // stamping a time on it would imply a capture that never happened.
+    let hit = verdict.hit;
+    let report = Report::offline(Command::Assert, hit, vec![verdict]);
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if hit {
         return Ok(());
     }
     std::process::exit(1)
@@ -571,14 +590,14 @@ fn resolve_space(
     space: cli::SpaceArg,
     monitor: Option<usize>,
     session: &pixelcoords_core::session::SessionFile,
-) -> Result<pixelcoords_core::verdict::PointSpace> {
-    use pixelcoords_core::verdict::PointSpace;
+) -> Result<pixelcoords_core::space::Origin> {
+    use pixelcoords_core::space::Origin;
     match space {
-        cli::SpaceArg::Global => Ok(PointSpace::Global),
-        cli::SpaceArg::Window => Ok(PointSpace::Window),
+        cli::SpaceArg::Global => Ok(Origin::Global),
+        cli::SpaceArg::Window => Ok(Origin::Window),
         cli::SpaceArg::Monitor => {
             if let Some(index) = monitor {
-                return Ok(PointSpace::Monitor(index));
+                return Ok(Origin::Monitor(index));
             }
             let indices: Vec<usize> = session.monitors.iter().map(|m| m.index).collect();
             anyhow::ensure!(
@@ -586,7 +605,7 @@ fn resolve_space(
                 "--space monitor is ambiguous on a session with monitors {indices:?} — \
                  add --monitor N"
             );
-            Ok(PointSpace::Monitor(indices[0]))
+            Ok(Origin::Monitor(indices[0]))
         }
     }
 }
@@ -1856,7 +1875,7 @@ mod tests {
         use pixelcoords_core::geometry::{Rect, Shape};
         let dir = write_find_fixture("pixelcoords-test-find-moved", true);
         let report = super::run_find(&ShiftedScreen { scale: 1.0 }, &dir, None).unwrap();
-        assert!(report.all_relocated, "got: {report:?}");
+        assert!(report.ok, "got: {report:?}");
         let r = &report.results[0];
         assert!(r.found && !r.ambiguous);
         assert!(r.score > 0.999, "exact patch scores ~1, got {}", r.score);
@@ -1874,7 +1893,7 @@ mod tests {
         let report = super::run_find(&ShiftedScreen { scale: 1.0 }, &dir, Some("CHIP")).unwrap();
         assert_eq!(report.results.len(), 1);
         assert_eq!(report.results[0].label, "chip");
-        assert!(report.all_relocated);
+        assert!(report.ok);
 
         let err = super::run_find(&ShiftedScreen { scale: 1.0 }, &dir, Some("nope"))
             .unwrap_err()
@@ -2172,7 +2191,7 @@ mod tests {
             .to_string();
         assert!(err.contains("--monitor N"), "got: {err}");
         let ok = super::resolve_space(crate::cli::SpaceArg::Monitor, Some(1), &session).unwrap();
-        assert_eq!(ok, pixelcoords_core::verdict::PointSpace::Monitor(1));
+        assert_eq!(ok, pixelcoords_core::space::Origin::Monitor(1));
     }
 
     #[test]
@@ -2249,7 +2268,7 @@ mod tests {
             "shots",
             "--point",
             "-1920,540",
-            "--label",
+            "--expect",
             "submit",
             "--space",
             "global",
@@ -2257,7 +2276,7 @@ mod tests {
         .unwrap();
         let Some(crate::cli::Command::Assert {
             point,
-            label,
+            expect,
             space,
             ..
         }) = args.command
@@ -2265,8 +2284,37 @@ mod tests {
             panic!("expected the assert subcommand")
         };
         assert_eq!(point, "-1920,540");
-        assert_eq!(label.as_deref(), Some("submit"));
+        assert_eq!(expect.as_deref(), Some("submit"));
         assert_eq!(space, crate::cli::SpaceArg::Global);
+    }
+
+    /// `--label` still parses on `assert`, and that is deliberate: the
+    /// flag has to be *recognized* in order to be refused with an
+    /// explanation. Letting clap reject it as unknown would say "no such
+    /// flag" about a flag that worked last release and will work again
+    /// next release, meaning something else.
+    #[test]
+    fn assert_still_accepts_label_so_it_can_refuse_it() {
+        let args = crate::cli::Cli::try_parse_from([
+            "pixelcoords",
+            "assert",
+            "--session",
+            "shots",
+            "--point",
+            "10,10",
+            "--label",
+            "submit",
+        ])
+        .unwrap();
+        let Some(crate::cli::Command::Assert { label, expect, .. }) = args.command else {
+            panic!("expected the assert subcommand")
+        };
+        assert_eq!(
+            label.as_deref(),
+            Some("submit"),
+            "parsed, so main can exit 2 naming --expect"
+        );
+        assert!(expect.is_none());
     }
 
     #[test]
