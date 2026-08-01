@@ -299,6 +299,49 @@ pub fn restore_selections(file: &SessionFile) -> (Vec<Selection>, Vec<String>) {
     (kept, dropped)
 }
 
+/// The selections a `--label` restricts to, paired with their index in
+/// the session — the identity every report row carries. `None` selects
+/// everything. Matching is ASCII case-insensitive, as the window matcher
+/// is.
+///
+/// An empty result is the caller's to report: each command refuses in its
+/// own error type, and only the caller knows whether an empty *session*
+/// or an unmatched *label* is the cause. Pair it with `distinct_labels`
+/// to say what the session does carry.
+pub fn select_by_label<'a>(
+    session: &'a SessionFile,
+    label: Option<&str>,
+) -> Vec<(usize, &'a SelectionRecord)> {
+    session
+        .selections
+        .iter()
+        .enumerate()
+        .filter(|(_, record)| label.is_none_or(|want| record.label.eq_ignore_ascii_case(want)))
+        .collect()
+}
+
+/// The labels a `--label` could have matched, in session order,
+/// deduplicated ASCII case-insensitively; unlabeled selections contribute
+/// nothing.
+///
+/// Takes an iterator rather than the session because the caller decides
+/// what "could have matched" means: `assert` lists labels among its
+/// *space-filtered* candidates, since a monitor-space question cannot be
+/// answered by a selection on another monitor.
+pub fn distinct_labels<'a>(records: impl Iterator<Item = &'a SelectionRecord>) -> Vec<String> {
+    let mut labels: Vec<String> = Vec::new();
+    for record in records {
+        if record.label.is_empty() {
+            continue;
+        }
+        if labels.iter().any(|l| l.eq_ignore_ascii_case(&record.label)) {
+            continue;
+        }
+        labels.push(record.label.clone());
+    }
+    labels
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,6 +463,72 @@ mod tests {
     fn no_displays_at_all_is_missing() {
         let saved = panel(0, "DELL U2723QE", 3840, 2160, 1.0);
         assert_eq!(match_monitor(&saved, &[]), MonitorMatch::Missing);
+    }
+
+    /// A session of labeled rects on monitor 0, in the given order.
+    fn labeled(labels: &[&str]) -> SessionFile {
+        let selections: Vec<Selection> = labels
+            .iter()
+            .map(|label| {
+                let mut sel = Selection::new(Shape::Rect(Rect::new(0, 0, 10, 10)), 0);
+                sel.label = (*label).to_string();
+                sel
+            })
+            .collect();
+        let crops: Vec<String> = (0..labels.len()).map(|i| format!("crop-{i}.png")).collect();
+        SessionFile::build(
+            "test",
+            "2026-07-27T00:00:00Z".into(),
+            vec![monitor(0, 0, 0)],
+            &selections,
+            &crops,
+            None,
+        )
+    }
+
+    #[test]
+    fn select_by_label_keeps_session_indices() {
+        let file = labeled(&["submit", "cancel", "submit"]);
+
+        let all = select_by_label(&file, None);
+        assert_eq!(all.len(), 3, "no label selects everything");
+        assert_eq!(all.iter().map(|(i, _)| *i).collect::<Vec<_>>(), [0, 1, 2]);
+
+        // The index is the record's identity in the file, not its position
+        // in the filtered result — every report row is keyed by it.
+        let some = select_by_label(&file, Some("submit"));
+        assert_eq!(some.iter().map(|(i, _)| *i).collect::<Vec<_>>(), [0, 2]);
+    }
+
+    #[test]
+    fn select_by_label_matches_case_insensitively_and_can_come_up_empty() {
+        let file = labeled(&["Submit"]);
+        assert_eq!(select_by_label(&file, Some("SUBMIT")).len(), 1);
+        assert!(
+            select_by_label(&file, Some("nope")).is_empty(),
+            "an unmatched label is an empty result, not an error — the \
+             caller decides how to refuse"
+        );
+    }
+
+    #[test]
+    fn distinct_labels_dedupes_case_insensitively_and_drops_blanks() {
+        let file = labeled(&["submit", "", "SUBMIT", "cancel"]);
+        assert_eq!(
+            distinct_labels(file.selections.iter()),
+            ["submit", "cancel"],
+            "first spelling wins, session order is kept, unlabeled \
+             selections contribute nothing"
+        );
+    }
+
+    #[test]
+    fn distinct_labels_reports_only_what_it_is_given() {
+        // The iterator is the point: a monitor-space question lists the
+        // labels on *that* monitor, not every label in the session.
+        let file = labeled(&["submit", "cancel"]);
+        let first_only = distinct_labels(file.selections.iter().take(1));
+        assert_eq!(first_only, ["submit"]);
     }
 
     #[test]

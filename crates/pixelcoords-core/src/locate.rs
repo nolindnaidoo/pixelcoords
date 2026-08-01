@@ -18,7 +18,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::geometry::{Point, Shape, Size};
-use crate::session::SessionFile;
+use crate::session::SelectionRecord;
 
 pub const FIND_SCHEMA_VERSION: u32 = 1;
 
@@ -410,22 +410,22 @@ pub struct FindReport {
 }
 
 /// Assemble the report from the attempted selections — the whole session
-/// or a labeled subset; each relocation carries its selection's index in
-/// the session file. `captured_utc` is supplied by the caller — this
-/// crate has no clock.
+/// or a labeled subset. Each attempt is `(index, record, relocation)`:
+/// the record's index in the session file, which every row carries as its
+/// identity, and the record itself.
+///
+/// The record is passed rather than looked up by index inside a
+/// `SessionFile`, so a caller cannot hand over an index that does not
+/// resolve. `session::select_by_label` returns exactly these pairs.
+/// `captured_utc` is supplied by the caller — this crate has no clock.
 pub fn report(
-    session: &SessionFile,
-    relocations: &[(usize, Relocation)],
+    attempts: &[(usize, &SelectionRecord, Relocation)],
     captured_utc: String,
 ) -> FindReport {
-    let results: Vec<FindResult> = relocations
+    let results: Vec<FindResult> = attempts
         .iter()
-        .map(|(index, reloc)| {
+        .map(|(index, record, reloc)| {
             let index = *index;
-            let record = session
-                .selections
-                .get(index)
-                .expect("relocation index within the session");
             let base = FindResult {
                 index,
                 label: record.label.clone(),
@@ -674,9 +674,9 @@ mod tests {
         );
     }
 
-    fn session_of_one() -> SessionFile {
+    fn session_of_one() -> crate::session::SessionFile {
         use crate::selection::Selection;
-        use crate::session::MonitorRecord;
+        use crate::session::{MonitorRecord, SessionFile};
         let mut sel = Selection::new(Shape::Rect(Rect::new(10, 20, 30, 40)), 0);
         sel.label = "submit".into();
         SessionFile::build(
@@ -700,9 +700,9 @@ mod tests {
     fn report_translates_found_selections_and_flags_the_rest() {
         let session = session_of_one();
         let found = report(
-            &session,
             &[(
                 0,
+                &session.selections[0],
                 Relocation {
                     crop_origin: Point::new(10, 20),
                     outcome: Ok(Located {
@@ -727,9 +727,9 @@ mod tests {
         );
 
         let miss = report(
-            &session,
             &[(
                 0,
+                &session.selections[0],
                 Relocation {
                     crop_origin: Point::new(10, 20),
                     outcome: Ok(Located {
@@ -748,9 +748,9 @@ mod tests {
         assert!(miss.results[0].new_px.is_none());
 
         let ambiguous = report(
-            &session,
             &[(
                 0,
+                &session.selections[0],
                 Relocation {
                     crop_origin: Point::new(10, 20),
                     outcome: Ok(Located {
@@ -772,9 +772,9 @@ mod tests {
         );
 
         let errored = report(
-            &session,
             &[(
                 0,
+                &session.selections[0],
                 Relocation {
                     crop_origin: Point::new(10, 20),
                     outcome: Err(LocateError::FlatTemplate),
@@ -796,9 +796,9 @@ mod tests {
     fn find_report_json_shape_is_stable() {
         let session = session_of_one();
         let rep = report(
-            &session,
             &[(
                 0,
+                &session.selections[0],
                 Relocation {
                     crop_origin: Point::new(10, 20),
                     outcome: Ok(Located {
