@@ -104,14 +104,61 @@ pub enum LocateError {
     EmptyTemplate,
     #[error("the crop is a flat color, which matches anywhere rather than somewhere")]
     FlatTemplate,
+    #[error("the crop does not fit in the {frame:?} frame at {at:?}")]
+    OutOfFrame { at: Point, frame: Size },
 }
 
-/// Precomputed template statistics over its masked pixels.
-struct TemplateStats {
+/// A template prepared for repeated scoring: its masked pixels, their
+/// values, and the moments correlation needs.
+///
+/// Preparing it is where a crop with nothing to match — no visible
+/// pixels, or one flat colour — is refused. A caller that polls therefore
+/// cannot discover that on poll sixty: it finds out before the loop, with
+/// the reason.
+#[derive(Debug, Clone)]
+pub struct TemplateStats {
     coords: Vec<(usize, usize)>,
     values: Vec<f64>,
     mean: f64,
     var: f64,
+    /// Extent of the masked pixels, `max coord + 1` per axis — the bound
+    /// a placement has to satisfy. Not the template's own size: a mask
+    /// that is empty at the right edge legitimately lets a scan reach
+    /// further, and `locate` depends on that.
+    span: Size,
+}
+
+impl TemplateStats {
+    /// Prepare `tpl` for scoring, refusing a crop that cannot match.
+    pub fn prepare(tpl: &Template) -> Result<Self, LocateError> {
+        template_stats(tpl)
+    }
+
+    /// The masked extent — how much room a placement needs.
+    #[must_use]
+    pub const fn span(&self) -> Size {
+        self.span
+    }
+
+    /// Normalized cross-correlation with the template placed at `at`.
+    ///
+    /// Fixed-location scoring: no search and no ambiguity, which is
+    /// `locate`'s job. This is what `wait` polls with — a region that has
+    /// not moved is answered by reading its own pixels, rather than
+    /// re-scanning a whole frame to rediscover where it already is.
+    pub fn score_at(&self, screen: &GrayImage, at: Point) -> Result<f64, LocateError> {
+        let fits = at.x >= 0
+            && at.y >= 0
+            && (at.x as usize).saturating_add(self.span.w as usize) <= screen.w
+            && (at.y as usize).saturating_add(self.span.h as usize) <= screen.h;
+        if !fits {
+            return Err(LocateError::OutOfFrame {
+                at,
+                frame: Size::new(screen.w as i32, screen.h as i32),
+            });
+        }
+        Ok(ncc_at(screen, self, at.x as usize, at.y as usize))
+    }
 }
 
 fn template_stats(tpl: &Template) -> Result<TemplateStats, LocateError> {
@@ -135,11 +182,16 @@ fn template_stats(tpl: &Template) -> Result<TemplateStats, LocateError> {
     if var <= f64::EPSILON {
         return Err(LocateError::FlatTemplate);
     }
+    let span = Size::new(
+        coords.iter().map(|c| c.0).max().unwrap_or(0) as i32 + 1,
+        coords.iter().map(|c| c.1).max().unwrap_or(0) as i32 + 1,
+    );
     Ok(TemplateStats {
         coords,
         values,
         mean,
         var,
+        span,
     })
 }
 
@@ -581,6 +633,88 @@ mod tests {
         let loc = locate(&screen, &tpl, None).unwrap();
         assert_eq!((loc.x, loc.y), (50, 40));
         assert!(loc.score > 0.999);
+    }
+
+    #[test]
+    fn scoring_at_a_known_spot_agrees_with_searching_for_it() {
+        // `wait` polls with `score_at` instead of `locate` because it
+        // already knows where the region is. The two must agree there, or
+        // a region would "match" for one command and not the other.
+        let screen = textured(160, 120, 31);
+        let tpl = cut(&screen, 50, 40, 24, 24);
+        let stats = TemplateStats::prepare(&tpl).unwrap();
+
+        let fixed = stats.score_at(&screen, Point::new(50, 40)).unwrap();
+        let searched = locate(&screen, &tpl, None).unwrap();
+        assert!(
+            (fixed - searched.score).abs() < 1e-9,
+            "{fixed} vs {searched:?}"
+        );
+        assert!(fixed > 0.999);
+    }
+
+    #[test]
+    fn scoring_the_wrong_spot_scores_low_without_searching_for_a_better_one() {
+        let screen = textured(160, 120, 31);
+        let stats = TemplateStats::prepare(&cut(&screen, 50, 40, 24, 24)).unwrap();
+        let elsewhere = stats.score_at(&screen, Point::new(10, 10)).unwrap();
+        assert!(
+            elsewhere < SCORE_FLOOR,
+            "fixed-location scoring reports what is there, got {elsewhere}"
+        );
+    }
+
+    #[test]
+    fn a_placement_off_the_frame_is_refused_rather_than_indexing_past_it() {
+        // The private hot path indexes unchecked; the public entry point
+        // is where a caller's coordinate gets validated.
+        let screen = textured(64, 64, 7);
+        let stats = TemplateStats::prepare(&cut(&screen, 0, 0, 24, 24)).unwrap();
+        assert_eq!(stats.span(), Size::new(24, 24));
+
+        for bad in [Point::new(-1, 0), Point::new(0, -1), Point::new(41, 0)] {
+            assert_eq!(
+                stats.score_at(&screen, bad).unwrap_err(),
+                LocateError::OutOfFrame {
+                    at: bad,
+                    frame: Size::new(64, 64),
+                },
+                "at {bad:?}"
+            );
+        }
+        // Exactly flush with the far edge still fits.
+        assert!(stats.score_at(&screen, Point::new(40, 40)).is_ok());
+    }
+
+    #[test]
+    fn preparing_is_where_an_unusable_crop_is_refused() {
+        // The reason `wait` prepares before its loop rather than inside
+        // it: a featureless crop is named up front, not on poll sixty.
+        let flat = Template {
+            gray: GrayImage {
+                w: 4,
+                h: 4,
+                px: vec![0.5; 16],
+            },
+            mask: vec![true; 16],
+        };
+        assert_eq!(
+            TemplateStats::prepare(&flat).unwrap_err(),
+            LocateError::FlatTemplate
+        );
+
+        let empty = Template {
+            gray: GrayImage {
+                w: 4,
+                h: 4,
+                px: vec![0.5; 16],
+            },
+            mask: vec![false; 16],
+        };
+        assert_eq!(
+            TemplateStats::prepare(&empty).unwrap_err(),
+            LocateError::EmptyTemplate
+        );
     }
 
     #[test]

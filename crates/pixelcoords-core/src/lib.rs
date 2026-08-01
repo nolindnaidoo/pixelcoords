@@ -11,6 +11,7 @@
 pub mod config;
 pub mod diff;
 pub mod draw;
+pub mod duration;
 pub mod emit;
 pub mod font;
 pub mod geometry;
@@ -25,3 +26,4 @@ pub mod session;
 pub mod space;
 pub mod strings;
 pub mod verdict;
+pub mod wait;

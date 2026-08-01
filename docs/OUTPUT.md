@@ -385,6 +385,70 @@ What the fields mean, honestly:
   coordinates, and `ok` is false — acting on the wrong instance is worse
   than not acting.
 
+## Waiting for the screen to settle: `wait`
+
+Automation that clicks needs to wait — for a dialog to appear, a spinner
+to leave, a state to settle. Every consumer of a session was writing that
+loop by hand: capture, compare, sleep, repeat. The primitives were all
+here already; this is the missing verb.
+
+```bash
+pixelcoords wait --session shots --label dialog --for match
+pixelcoords wait --session shots --for change --timeout 2m --interval 1s
+```
+
+Exit codes: **0** the condition held; **1** it did not before the budget
+ran out; **2** the question was malformed (unreadable session, a display
+that changed, a crop that could never match, an unparseable duration).
+
+A timeout is **1**. It is a negative answer, not a broken question.
+
+```json
+{
+  "schema": 2,
+  "command": "wait",
+  "captured_utc": "2026-08-01T14:02:41Z",
+  "polls": 7,
+  "elapsed_ms": 3204,
+  "ok": true,
+  "results": [
+    { "index": 0, "label": "dialog", "monitor": 0,
+      "score": 0.997, "matching": true }
+  ]
+}
+```
+
+`match` needs every watched region back; `change` fires on the first that
+differs. The report is printed on a timeout too, with each region's final
+score — knowing a region reached 0.87 against a 0.9 floor is the
+difference between "the UI is still settling" and "that region is gone".
+
+### `--timeout` is a poll budget
+
+It is converted to a poll count before the loop starts, and the loop
+counts rather than reading a clock. `30s` at `500ms` is 61 polls: one
+immediately, then sixty. **Capture time is not counted**, so the wall
+clock exceeds `--timeout` by roughly what the captures cost.
+
+That is a deliberate trade. Against a real deadline, a loaded machine
+spends more of the window capturing and therefore gives the UI *fewer*
+chances precisely when the UI is slowest — backwards for a
+synchronization primitive. A budget gives the same number of chances
+everywhere. `polls` and `elapsed_ms` are both reported so the actual cost
+is visible rather than inferred.
+
+### What `--for change` cannot see
+
+Correlation is brightness- and contrast-normalized, which is what lets
+`find` survive a theme tweak. The same property means a region that
+changes *uniformly* — a modal backdrop dimming behind it, display
+auto-brightness, a luminance-only theme switch — still scores near 1.0,
+and `--for change` will not fire.
+
+This is inherent to the metric, not a bug to route around. A caller who
+means "any pixel differs at all" wants `diff --tolerance 0`, which
+compares RGB directly.
+
 ## Did this still look right: `diff`
 
 `assert` answers whether a point is inside a region; `find` answers where
