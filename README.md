@@ -37,7 +37,8 @@ It freezes your screen so nothing moves while you measure, then lets you
 mark regions with real shapes — rectangles, ellipses, triangles, N-gons,
 freehand — rotated, labeled, and placed to the exact pixel with a loupe
 and arrow-key nudging, plus rulers that report distance and angle
-between any two points. What you mark becomes data, not a picture:
+between any two points. Marks snap to the UI edges already in the
+frozen image, so a rect around a button lands on the button. What you mark becomes data, not a picture:
 versioned JSON in physical pixels with per-monitor DPI scale, labeled
 crops and frame-sized cutouts, and ready-to-paste click code for your
 automation stack.

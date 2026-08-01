@@ -8,6 +8,7 @@ use pixelcoords_core::font;
 use pixelcoords_core::geometry::ToolKind;
 use pixelcoords_core::geometry::{Line, Point, Rect, Shape, Size};
 use pixelcoords_core::selection::SelectionSet;
+use pixelcoords_core::snap::Snap;
 use pixelcoords_core::strings::Strings;
 
 const HUD_MARGIN: i32 = 12;
@@ -78,6 +79,11 @@ pub struct FrameState<'a> {
     pub loupe: bool,
     /// The session-name editor's in-progress text and caret state.
     pub naming: Option<(&'a str, bool)>,
+    /// Edge snapping is on — shown in the panel's X row.
+    pub snap_enabled: bool,
+    /// The edge the in-flight gesture snapped to, drawn so the user sees
+    /// *what* captured the point rather than only that something did.
+    pub snap: Snap,
 }
 
 /// Compose one frame: `background` is the frozen capture (same size as
@@ -177,6 +183,7 @@ pub fn compose(buffer: &mut [u32], size: Size, background: &[u32], state: &Frame
         );
     }
 
+    draw_snap_guides(&mut canvas, state);
     draw_cursor_readout(&mut canvas, background, size, state);
     draw_hud(&mut canvas, size, state);
     draw_loupe(&mut canvas, background, size, state);
@@ -363,6 +370,36 @@ fn draw_caption(
     canvas.draw_text(pos.x, pos.y, text, color, scale);
 }
 
+/// The edges an in-flight gesture snapped to, drawn along their detected
+/// extent in the label color.
+///
+/// Along their extent, not full-screen crosshairs: the point is to say
+/// *this button's left border* captured you, and a line spanning the whole
+/// display says nothing about which element it belongs to.
+fn draw_snap_guides(canvas: &mut Canvas, state: &FrameState) {
+    // The snap belongs to the cursor's monitor; `cursor` is `None` on
+    // every other frame, which is exactly the guard needed.
+    if state.cursor.is_none() {
+        return;
+    }
+    if let Some(hit) = state.snap.x {
+        let (lo, hi) = hit.span;
+        canvas.draw_line(
+            Line::new(Point::new(hit.at, lo), Point::new(hit.at, hi)),
+            state.style.label,
+            1,
+        );
+    }
+    if let Some(hit) = state.snap.y {
+        let (lo, hi) = hit.span;
+        canvas.draw_line(
+            Line::new(Point::new(lo, hit.at), Point::new(hi, hit.at)),
+            state.style.label,
+            1,
+        );
+    }
+}
+
 /// The control panel: a dimmed, bordered card in the bottom-left with a
 /// key column (label color) and an action column (muted), instead of one
 /// long line drawn straight onto the image.
@@ -405,14 +442,19 @@ fn draw_hud(canvas: &mut Canvas, size: Size, state: &FrameState) {
     } else {
         format!("tool: {tool_name}")
     };
+    // The X row is the second dynamic slot: snapping toggles live, and a
+    // static "edge snap" would leave the panel lying about the state.
+    let snap_action = if state.snap_enabled {
+        state.strings.hud_snap_row_on
+    } else {
+        state.strings.hud_snap_row_off
+    };
     let rows: Vec<(&str, &str)> = rows
         .iter()
-        .map(|&(key, action)| {
-            if key == "W" {
-                (key, tool_action.as_str())
-            } else {
-                (key, action)
-            }
+        .map(|&(key, action)| match key {
+            "W" => (key, tool_action.as_str()),
+            k if k == state.strings.hud_snap_row_key => (key, snap_action),
+            _ => (key, action),
         })
         .collect();
 
@@ -505,6 +547,8 @@ mod tests {
             editing: None,
             measure_editing: None,
             measure_preview: None,
+            snap_enabled: false,
+            snap: Snap::default(),
             flash: None,
             strings: &EN,
             style: Config::default().resolve_style().unwrap(),
@@ -544,6 +588,8 @@ mod tests {
             editing: None,
             measure_editing: None,
             measure_preview: None,
+            snap_enabled: false,
+            snap: Snap::default(),
             flash: None,
             strings: &EN,
             style: Config::default().resolve_style().unwrap(),
@@ -637,6 +683,8 @@ mod tests {
             editing: None,
             measure_editing: None,
             measure_preview: None,
+            snap_enabled: false,
+            snap: Snap::default(),
             flash: None,
             strings: &EN,
             style: Config::default().resolve_style().unwrap(),
@@ -675,6 +723,8 @@ mod tests {
             editing: None,
             measure_editing: None,
             measure_preview: None,
+            snap_enabled: false,
+            snap: Snap::default(),
             flash: None,
             strings: &EN,
             style: Config::default().resolve_style().unwrap(),

@@ -55,6 +55,9 @@ pub enum Action {
     /// windows are borderless and undecorated, so no close button exists
     /// and `CloseRequested` never fires from a user action.
     ReleaseMonitor,
+    /// Turn edge snapping on or off for the rest of the run. The config
+    /// owns the launch default; this does not persist.
+    ToggleSnap,
     /// Accepted by the grammar for forward compatibility; snapshot mode has
     /// no themes, so the binary treats it as a no-op.
     NextTheme,
@@ -121,6 +124,7 @@ pub fn parse_action(s: &str) -> Result<Action, HotkeyError> {
         "rotate_ccw" => Ok(Action::RotateCcw),
         "rotate_cw" => Ok(Action::RotateCw),
         "release_monitor" => Ok(Action::ReleaseMonitor),
+        "toggle_snap" => Ok(Action::ToggleSnap),
         "next_theme" => Ok(Action::NextTheme),
         other => Err(HotkeyError::UnknownAction(other.to_string())),
     }
@@ -187,6 +191,7 @@ pub fn default_bindings() -> Vec<Binding> {
         "c=cycle_overlap,press,cursor_in",
         "h=toggle_panel",
         "n=name_session",
+        "x=toggle_snap",
         // The only trigger for releasing one display; see Action::ReleaseMonitor.
         "r=release_monitor",
         // Rotation binds press AND repeat so holding the key keeps turning.
@@ -404,7 +409,7 @@ mod tests {
     #[test]
     fn defaults_cover_expected_keys() {
         let bindings = default_bindings();
-        assert_eq!(bindings.len(), 14);
+        assert_eq!(bindings.len(), 15);
         assert_eq!(
             match_event(
                 &bindings,
@@ -436,6 +441,15 @@ mod tests {
         assert!(
             !bindings.iter().any(|b| b.action == Action::Quit),
             "quit is Esc's job, not a letter's"
+        );
+        assert_eq!(
+            match_event(
+                &bindings,
+                KeyName::Character('X'),
+                Edge::Press,
+                OverlayState::default()
+            ),
+            Some(Action::ToggleSnap),
         );
     }
 }

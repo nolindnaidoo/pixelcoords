@@ -21,6 +21,14 @@ pub struct Strings {
     pub hud_release_blocked_suffix: &'static str,
     /// A window closed while others remain: that display is live again.
     pub hud_released: &'static str,
+    /// Edge snapping toggled on or off for the rest of the run.
+    pub hud_snap_on: &'static str,
+    pub hud_snap_off: &'static str,
+    /// The panel row's key column for the snap toggle, and the two states
+    /// its action column shows.
+    pub hud_snap_row_key: &'static str,
+    pub hud_snap_row_on: &'static str,
+    pub hud_snap_row_off: &'static str,
 }
 
 pub const EN: Strings = Strings {
@@ -38,6 +46,7 @@ pub const EN: Strings = Strings {
         ("arrows", "nudge (Shift 10, Alt size)"),
         ("M", "hold: loupe"),
         ("N", "name session"),
+        ("X", "edge snap"),
         ("R", "release monitor"),
         ("3-9", "polygon sides"),
         ("Space", "hold: move panel"),
@@ -51,4 +60,9 @@ pub const EN: Strings = Strings {
     hud_release_blocked_prefix: "Monitor holds ",
     hud_release_blocked_suffix: " selections - delete them first",
     hud_released: "Monitor released",
+    hud_snap_on: "SNAP ON",
+    hud_snap_off: "SNAP OFF",
+    hud_snap_row_key: "X",
+    hud_snap_row_on: "edge snap: on",
+    hud_snap_row_off: "edge snap: off",
 };
