@@ -7,8 +7,9 @@ pixelcoords            # 1. freeze, mark, save a session
 pixelcoords assert     # 2. score points against it
 pixelcoords resolve    # 3. ask where to act, in your API's units
 pixelcoords emit       # 4. generate click code from it
-pixelcoords find       # 5. re-locate its regions after the UI drifts
-pixelcoords resume     # 6. reopen it and keep editing
+pixelcoords diff       # 5. check its regions still look right
+pixelcoords find       # 6. re-locate its regions after the UI drifts
+pixelcoords resume     # 7. reopen it and keep editing
 ```
 
 Exit codes are the API everywhere: **0** success/hit/found, **1**
@@ -237,6 +238,36 @@ coordinate worth handing to an executor.
 
 `emit` remains the human-facing sibling: ready-to-paste code. `resolve`
 is the machine answer underneath it.
+
+## `diff`
+
+Compare each region's saved crop against the same rectangle of the screen
+now, or of stored artifacts. Exit 0 every region within tolerance, 1 any
+region over, 2 malformed. Stdout is a versioned JSON report.
+
+| Flag | Meaning |
+|------|---------|
+| `--session <PATH>` | The session |
+| `--against <DIR\|IMAGE>` | Compare against another session directory's screenshots, or one PNG standing in for a single-monitor capture, instead of capturing |
+| `--label <TEXT>` | Compare only this label |
+| `--tolerance <PCT>` | Percent of a region's masked pixels allowed to differ (default `0` — exact) |
+
+This is visual regression testing over **regions a human marked**, not
+whole screenshots: a change outside your regions is not a difference, and
+shaped selections compare by their own silhouette because a saved crop
+already carries its shape in its alpha channel.
+
+`--tolerance` defaults to exact. Anti-aliasing and font smoothing make a
+small nonzero value the practical choice in CI, but a diff tool that
+rounds by default is lying by default — start at `0`, raise it only as
+far as your own noise requires, and note that the denominator is the
+region's **masked** pixels, so one number means the same thing for a
+rect and for a circle.
+
+`--against` is the offline form: no capture, no permission, so it runs in
+CI against artifacts. An image whose dimensions do not match the session's
+monitor is refused rather than compared — the measurement would describe
+the resize, not the UI.
 
 ## `find`
 

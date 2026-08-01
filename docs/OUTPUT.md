@@ -385,6 +385,69 @@ What the fields mean, honestly:
   coordinates, and `ok` is false — acting on the wrong instance is worse
   than not acting.
 
+## Did this still look right: `diff`
+
+`assert` answers whether a point is inside a region; `find` answers where
+a region went. Neither answers whether a region still *looks* the same,
+which is visual regression testing — scoped to regions a human marked
+rather than to whole screenshots, so a change elsewhere on screen is not
+a failure.
+
+```bash
+pixelcoords diff --session shots
+pixelcoords diff --session shots --against baseline/ --tolerance 0.5
+pixelcoords diff --session shots --against ci-artifact.png
+```
+
+Exit codes: **0** every region within tolerance; **1** one is over;
+**2** the question was malformed (unreadable session, missing crop, a
+display that changed since the capture, or an `--against` image whose
+size does not match).
+
+```json
+{
+  "schema": 2,
+  "command": "diff",
+  "captured_utc": "2026-08-01T14:02:11Z",
+  "ok": false,
+  "results": [
+    { "index": 0, "label": "btn", "monitor": 0,
+      "region": { "x": 40, "y": 40, "w": 20, "h": 20 },
+      "masked_px": 400, "changed_px": 3,
+      "changed_pct": 0.75, "mean_delta": 172.67 }
+  ]
+}
+```
+
+`captured_utc` appears only when the screen was actually captured —
+`--against` compares stored artifacts and claims no capture time.
+
+What the numbers mean, honestly:
+
+- **`masked_px`** is the region's own pixel count, and the denominator
+  `changed_pct` uses. Reported so the denominator is inspectable rather
+  than implied: a circle crop is roughly a fifth transparent, and
+  dividing by the crop's *area* would make one `--tolerance` mean a
+  different thing for every shape kind.
+- **`changed_px`** counts masked pixels where any of R, G, or B differs
+  by at least 1. Alpha is the mask, not content — comparing it would test
+  the crop's transparency against the capture's opaque 255 and call every
+  pixel changed.
+- **`mean_delta`** averages the absolute channel difference over the
+  pixels that *changed*, so it says how badly, not how widely. It is
+  exactly `0.0` on a clean run rather than undefined.
+- **`region`** is provenance in the session's own physical pixels, not a
+  coordinate to act on. `resolve` answers that question.
+- **`--tolerance` is applied to the measurement, not baked into it**, so
+  a stored report can be re-judged at a different bar without
+  re-capturing.
+
+Shaped selections compare by their true silhouette — the same alpha-mask
+rule `find` matches by, so rotated rects, triangles, circles, and concave
+polygons all compare by the pixels a human actually marked. `diff` refuses
+a display whose resolution or DPI scale changed since the session, for the
+same reason `find` does.
+
 ## Self-healing coordinates: `find`
 
 A session's coordinates describe one frozen instant; the moment the UI

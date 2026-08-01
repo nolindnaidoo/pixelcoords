@@ -61,7 +61,17 @@ fn main() -> Result<()> {
         }
         Some(cli::Command::Windows { json }) => list_windows(&XcapCapture, json),
         Some(cli::Command::Shoot { out, ref monitor }) => shoot(out.or(args.out.clone()), monitor),
-        Some(cli::Command::Assert {
+        Some(ref command) => run_subcommand(&args, command),
+        None => run_overlay(&args),
+    }
+}
+
+/// The commands that read a saved session. Split from `main` because the
+/// dispatch outgrew one screen, not because they share behavior — each
+/// still owns its own printing and exit code.
+fn run_subcommand(args: &cli::Cli, command: &cli::Command) -> Result<()> {
+    match *command {
+        cli::Command::Assert {
             ref session,
             ref point,
             stdin,
@@ -69,7 +79,7 @@ fn main() -> Result<()> {
             ref label,
             space,
             monitor,
-        }) => assert_command(
+        } => assert_command(
             session,
             point.as_deref(),
             stdin,
@@ -78,42 +88,48 @@ fn main() -> Result<()> {
             space,
             monitor,
         ),
-        Some(cli::Command::Emit {
+        cli::Command::Emit {
             ref session,
             format,
             ref label,
-        }) => {
+        } => {
             print!("{}", emit_snippet(session, format, label.as_deref())?);
             Ok(())
         }
-        Some(cli::Command::Resume {
+        cli::Command::Resume {
             ref session,
             last,
             ref out,
-        }) => {
+        } => {
             let root = captures_root(dirs::download_dir());
             let path = resolve_resume_session(session.as_deref(), last, &root)?;
-            run_resume(&args, &path, out.clone())
+            run_resume(args, &path, out.clone())
         }
-        Some(cli::Command::Rename {
+        cli::Command::Rename {
             ref session,
             ref name,
-        }) => {
+        } => {
             let root = captures_root(dirs::download_dir());
             let path = resolve_resume_session(Some(session), false, &root)?;
             rename_session(&path, name)
         }
-        Some(cli::Command::Resolve {
+        cli::Command::Diff {
+            ref session,
+            ref against,
+            ref label,
+            tolerance,
+        } => diff_command(session, against.as_deref(), label.as_deref(), tolerance),
+        cli::Command::Resolve {
             ref session,
             ref label,
             space,
             units,
             relocate,
-        }) => resolve_command(session, label.as_deref(), space, units, relocate),
-        Some(cli::Command::Find {
+        } => resolve_command(session, label.as_deref(), space, units, relocate),
+        cli::Command::Find {
             ref session,
             ref label,
-        }) => {
+        } => {
             let report = match run_find(&XcapCapture, session, label.as_deref()) {
                 Ok(r) => r,
                 // 2, not 1: "a region was not found" and "the question was
@@ -129,7 +145,9 @@ fn main() -> Result<()> {
             }
             std::process::exit(1)
         }
-        None => run_overlay(&args),
+        cli::Command::Doctor { .. } | cli::Command::Windows { .. } | cli::Command::Shoot { .. } => {
+            unreachable!("handled in main")
+        }
     }
 }
 
@@ -240,6 +258,145 @@ fn monitor_from_record(record: &pixelcoords_core::session::MonitorRecord) -> cap
         size_native: Size::new(from(record.size_px.w), from(record.size_px.h)),
         scale: record.scale,
     }
+}
+
+/// The `diff` subcommand: print the report, exit 0 when every region is
+/// within tolerance, 1 when one is not, 2 on a malformed question.
+fn diff_command(
+    session: &std::path::Path,
+    against: Option<&std::path::Path>,
+    label: Option<&str>,
+    tolerance: f64,
+) -> Result<()> {
+    let report = match run_diff(&XcapCapture, session, against, label, tolerance) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("pixelcoords diff: {e:#}");
+            std::process::exit(2)
+        }
+    };
+    let ok = report.ok;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if ok {
+        return Ok(());
+    }
+    std::process::exit(1)
+}
+
+/// Compare each region's saved crop against the same rectangle of a
+/// fresh capture, or of stored artifacts when `--against` names them.
+fn run_diff<P: CaptureProvider>(
+    provider: &P,
+    path: &std::path::Path,
+    against: Option<&std::path::Path>,
+    label: Option<&str>,
+    tolerance: f64,
+) -> Result<pixelcoords_core::report::Report<pixelcoords_core::diff::RegionReport>> {
+    use pixelcoords_core::diff;
+    use pixelcoords_core::report::{Command, Report};
+
+    anyhow::ensure!(
+        (0.0..=100.0).contains(&tolerance),
+        "--tolerance is a percentage: {tolerance} is outside 0..=100"
+    );
+    let session = load_session(path)?;
+    let regions = regions::load(&session, &session_dir(path), label)?;
+
+    let (frames, captured) = match against {
+        None => {
+            let frames = regions::capture_frames(provider, &session, &regions)?;
+            let now = time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .context("formatting timestamp")?;
+            (frames, Some(now))
+        }
+        Some(source) => (stored_frames(source, &session, &regions)?, None),
+    };
+
+    let rows = regions
+        .iter()
+        .map(|region| {
+            let baseline = diff::Baseline::from_rgba(
+                region.crop.width() as usize,
+                region.crop.height() as usize,
+                region.crop.as_raw(),
+            )
+            .with_context(|| format!("selection {} ({:?})", region.index, region.record.label))?;
+            let frame = &frames[&region.monitor];
+            let measured = diff::compare(
+                &baseline,
+                frame.width() as usize,
+                frame.height() as usize,
+                frame.as_raw(),
+                region.origin,
+            )
+            .with_context(|| format!("selection {} ({:?})", region.index, region.record.label))?;
+            Ok(diff::RegionReport {
+                index: region.index,
+                label: region.record.label.clone(),
+                monitor: region.monitor,
+                region: region.record.px.clone(),
+                diff: measured,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let ok = diff::within(&rows, tolerance);
+    Ok(match captured {
+        Some(utc) => Report::captured(Command::Diff, utc, ok, rows),
+        None => Report::offline(Command::Diff, ok, rows),
+    })
+}
+
+/// The frames `--against` names: another session directory's screenshots,
+/// or a single PNG standing in for a one-monitor session's capture.
+///
+/// Dimensions are checked against the session, in the same family as the
+/// changed-display refusal: an image at the wrong scale would compare
+/// every region against the wrong pixels and report differences that say
+/// nothing about the UI.
+fn stored_frames(
+    source: &std::path::Path,
+    session: &pixelcoords_core::session::SessionFile,
+    regions: &[regions::Region],
+) -> Result<std::collections::HashMap<usize, image::RgbaImage>> {
+    let mut frames = std::collections::HashMap::new();
+    for index in regions.iter().map(|r| r.monitor) {
+        if frames.contains_key(&index) {
+            continue;
+        }
+        let record = session
+            .monitors
+            .iter()
+            .find(|m| m.index == index)
+            .with_context(|| format!("the session does not describe monitor {index}"))?;
+        let file = if source.is_dir() {
+            source.join(format!("screenshot-{index}.png"))
+        } else {
+            anyhow::ensure!(
+                session.monitors.len() == 1,
+                "--against with a single image needs a one-monitor session; \
+                 this one has {} — point it at a session directory instead",
+                session.monitors.len()
+            );
+            source.to_path_buf()
+        };
+        let img = image::open(&file)
+            .with_context(|| format!("reading {}", file.display()))?
+            .to_rgba8();
+        anyhow::ensure!(
+            img.width() == record.size_px.w as u32 && img.height() == record.size_px.h as u32,
+            "{} is {}x{}, but the session's monitor {index} is {}x{} — \
+             comparing them would measure the resize, not the UI",
+            file.display(),
+            img.width(),
+            img.height(),
+            record.size_px.w,
+            record.size_px.h
+        );
+        frames.insert(index, img);
+    }
+    Ok(frames)
 }
 
 /// The `resolve` subcommand: print the report, exit 0 when every label
@@ -2224,6 +2381,103 @@ mod tests {
             crop.save(dir.join("crop-0-chip.png")).unwrap();
         }
         dir
+    }
+
+    /// A 160x120 screenshot matching `write_find_fixture`'s monitor, with
+    /// the crop's own patch painted at its recorded origin — so the
+    /// session and the image agree unless a test perturbs one.
+    fn write_reference_screenshot(dir: &std::path::Path, name: &str, tweak: Option<(u32, u32)>) {
+        let patch = find_patch();
+        let mut img = RgbaImage::from_pixel(160, 120, image::Rgba([128, 128, 128, 255]));
+        for y in 0..16u32 {
+            for x in 0..24u32 {
+                let v = patch[(y * 24 + x) as usize];
+                img.put_pixel(30 + x, 20 + y, image::Rgba([v, v, v, 255]));
+            }
+        }
+        if let Some((x, y)) = tweak {
+            img.put_pixel(x, y, image::Rgba([1, 2, 3, 255]));
+        }
+        img.save(dir.join(name)).unwrap();
+    }
+
+    #[test]
+    fn diff_against_an_identical_screenshot_is_clean() {
+        let dir = write_find_fixture("pixelcoords-test-diff-clean", true);
+        write_reference_screenshot(&dir, "screenshot-0.png", None);
+        let report =
+            super::run_diff(&ShiftedScreen { scale: 1.0 }, &dir, Some(&dir), None, 0.0).unwrap();
+        assert!(report.ok, "got: {report:?}");
+        assert!(
+            report.captured_utc.is_none(),
+            "--against compares stored artifacts; nothing was captured"
+        );
+        let row = &report.results[0];
+        assert_eq!((row.diff.changed_px, row.diff.masked_px), (0, 24 * 16));
+        assert!(row.diff.mean_delta.abs() < f64::EPSILON);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn one_changed_pixel_inside_the_region_fails_at_tolerance_zero() {
+        let dir = write_find_fixture("pixelcoords-test-diff-one-px", true);
+        // (31, 21) is inside the region's rect at (30, 20, 24, 16).
+        write_reference_screenshot(&dir, "screenshot-0.png", Some((31, 21)));
+        let report =
+            super::run_diff(&ShiftedScreen { scale: 1.0 }, &dir, Some(&dir), None, 0.0).unwrap();
+        assert!(!report.ok, "exact is the default, and one pixel differs");
+        assert_eq!(report.results[0].diff.changed_px, 1);
+
+        // The same measurement passes once the bar is raised above it.
+        let lenient =
+            super::run_diff(&ShiftedScreen { scale: 1.0 }, &dir, Some(&dir), None, 1.0).unwrap();
+        assert!(lenient.ok, "1 of 384 masked pixels is under 1%");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_change_outside_the_region_is_not_a_difference() {
+        let dir = write_find_fixture("pixelcoords-test-diff-outside", true);
+        // (5, 5) is far outside the region — diff compares regions a
+        // human marked, not whole screenshots.
+        write_reference_screenshot(&dir, "screenshot-0.png", Some((5, 5)));
+        let report =
+            super::run_diff(&ShiftedScreen { scale: 1.0 }, &dir, Some(&dir), None, 0.0).unwrap();
+        assert!(report.ok);
+        assert_eq!(report.results[0].diff.changed_px, 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn against_an_image_of_the_wrong_size_is_refused() {
+        let dir = write_find_fixture("pixelcoords-test-diff-wrong-size", true);
+        let wrong = dir.join("half.png");
+        RgbaImage::from_pixel(80, 60, image::Rgba([0, 0, 0, 255]))
+            .save(&wrong)
+            .unwrap();
+        let err = super::run_diff(&ShiftedScreen { scale: 1.0 }, &dir, Some(&wrong), None, 0.0)
+            .unwrap_err();
+        let text = format!("{err:#}");
+        assert!(
+            text.contains("80x60") && text.contains("160x120"),
+            "got: {text}"
+        );
+        assert!(
+            text.contains("measure the resize"),
+            "the refusal has to say why, not just that: {text}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_tolerance_outside_a_percentage_is_refused() {
+        let dir = write_find_fixture("pixelcoords-test-diff-bad-tolerance", true);
+        for bad in [-1.0, 101.0] {
+            let err = super::run_diff(&ShiftedScreen { scale: 1.0 }, &dir, Some(&dir), None, bad)
+                .unwrap_err();
+            assert!(format!("{err:#}").contains("percentage"), "for {bad}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

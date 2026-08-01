@@ -9,6 +9,42 @@ version number, for what changed under you.
 
 ## Unreleased
 
+### `diff`: did my regions still look right
+
+`assert` answers whether a point is inside a region and `find` answers
+where a region went. Neither answers whether a region still *looks* the
+same, which is visual regression testing — and none of the tools in this
+space do it over saved, shape-aware regions.
+
+```
+pixelcoords diff --session shots --against baseline/ --tolerance 0.5
+```
+
+Scoped to regions a human marked rather than whole screenshots, so a
+change elsewhere on screen is not a failure. Shaped selections compare by
+their true silhouette for free: a saved crop already carries its shape in
+its alpha channel, which is the same rule `find` matches by. That rule is
+now `locate::MASK_ALPHA_FLOOR` rather than a threshold written out twice,
+because two definitions of "inside the shape" could drift apart silently.
+
+`--tolerance` is a percentage of a region's **masked** pixels, so one
+number means the same thing for a rect and for a circle — dividing by the
+crop's area instead would make a circle's bar a fifth looser than a
+rect's. It defaults to exact: anti-aliasing makes a small nonzero value
+practical in CI, but a diff tool that rounds by default is lying by
+default. The bar is applied to the measurement rather than baked into it,
+so a stored report can be re-judged without re-capturing.
+
+`--against` compares stored artifacts instead of capturing — offline, no
+permission, runs in CI. An image whose dimensions do not match the
+session's monitor is refused rather than compared, because the
+measurement would describe the resize and not the UI.
+
+`mean_delta` averages over the pixels that changed, so it says how badly
+rather than how widely. A clean run reports exactly `0.0`: the average of
+nothing is undefined, and shipping NaN would make every passing run fail
+to serialize.
+
 ### `resolve`: where to act for a label, in the units your API speaks
 
 Everything an executor needs already lived here, in pieces each consumer
