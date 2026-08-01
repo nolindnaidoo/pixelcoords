@@ -141,14 +141,16 @@ first:
   optional field or a new optional top-level array, the same pattern
   `platform`, `capture`, and `name` established. Old sessions keep
   loading; old consumers ignore what they do not know.
-- **The CLI is the part that still moves**, so it goes first. 0.4.0 is
-  the agent surface: a design pass settles the vocabulary the three new
+- **The CLI was the part that still moved**, so it went first. 0.4.0 was
+  the agent surface: a design pass settled the vocabulary the three new
   commands (`resolve`, `wait`, `diff`) share — written down in
-  [The agent-surface contract](#the-agent-surface-contract) below — then
-  they land on it, plus the one contract change to `assert`. Grouping
-  them together is the point: three commands answering the same question
+  [The agent-surface contract](#the-agent-surface-contract) below — and
+  they landed on it, along with `assert --stdin` and the two breaks that
+  had to happen before anything was built against them. Grouping them
+  together was the point: three commands answering the same question
   should not disagree about timeouts, `--label`, or exit codes, and
-  fixing that costs least before any of them exist.
+  fixing that cost least before any of them existed. **That contract is
+  now the thing later releases are held to**, not a plan.
 - **0.5.0 is reach**: new emit targets and external image input. Both
   add places the toolchain can point without changing what it already
   says to callers.
