@@ -235,6 +235,57 @@ time on it would imply a capture that never happened.
 answer. They agree for a single point and stop agreeing the moment a
 command answers about several, which is why both exist.
 
+### Scoring a trajectory: `assert --stdin`
+
+One process, one session parse, one point per line:
+
+```bash
+printf '# login flow\n\n850,440\n1050,440,submit\n' \
+  | pixelcoords assert --session shots --stdin
+```
+
+Lines are `X,Y` or `X,Y,label`; blank lines and `#` comments are skipped.
+A line's own label overrides `--expect` for that line only, so one stream
+can score a heterogeneous run. Only the first two commas are structural,
+so a label may contain commas without quoting: `1,2,row 3, column 4`.
+
+Each result gains a **`line`** — 1-based, counted over *input* lines, so
+skipped blanks and comments keep their numbering and a reported line
+matches the file you wrote:
+
+```json
+{
+  "schema": 2,
+  "command": "assert",
+  "ok": false,
+  "results": [
+    { "line": 3, "point": { "x": 850, "y": 440 }, "space": "global",
+      "hit": true,
+      "contained_in": [ { "index": 0, "label": "cancel", "shape": "rect", "monitor": 0 } ] },
+    { "line": 4, "point": { "x": 1050, "y": 440 }, "space": "global",
+      "hit": false, "contained_in": [],
+      "nearest": { "region": { "index": 1, "label": "submit", "shape": "rect", "monitor": 0 },
+                   "bbox_distance_px": 12.0 } }
+  ]
+}
+```
+
+`ok` is `true` only when every line hit, and the exit code follows it. A
+single `--point` run omits `line` entirely — a batch *adds* a field, it
+never removes one, so a consumer written against one shape reads the
+other.
+
+**A malformed line stops the run.** The error names the line
+(`line 7: "12,x" is not a whole number of pixels`), the exit code is 2,
+and no document is printed. Scoring the first six points of a trajectory
+and stopping would report a pass rate over a prefix, which reads exactly
+like a complete run — worse than no answer. Naming a label the session
+does not carry is the same kind of mistake and stops the run too. Callers
+who want lenient streams should pre-validate.
+
+A stream with no points at all — every line blank or a comment — is also
+exit 2 rather than a vacuous pass.
+
 `contained_in` lists every region holding the point in stacking order
 (last is topmost) — a miss against `--expect` still shows what the point
 *did* land in. `nearest` appears only on misses: the closest relevant

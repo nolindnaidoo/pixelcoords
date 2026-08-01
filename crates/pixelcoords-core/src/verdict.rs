@@ -44,6 +44,12 @@ pub enum VerdictError {
 /// *which* click missed.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Verdict {
+    /// 1-based line of the input stream this point came from; absent when
+    /// a single `--point` was scored, so the two shapes stay
+    /// field-compatible in the direction that matters — a batch adds a
+    /// field, it never removes one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
     pub point: Point,
     pub space: &'static str,
     /// The monitor index the point is local to; present only in monitor
@@ -58,6 +64,15 @@ pub struct Verdict {
     /// Present on a miss: the closest relevant region, for partial credit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nearest: Option<Nearest>,
+}
+
+impl Verdict {
+    /// Tag this verdict with the 1-based input line it came from.
+    #[must_use]
+    pub fn at_line(mut self, line: usize) -> Self {
+        self.line = Some(line);
+        self
+    }
 }
 
 /// A selection referenced by its position in the session file.
@@ -143,6 +158,7 @@ pub fn assess(
         nearest_relevant(&candidates, point, expect)
     };
     Ok(Verdict {
+        line: None,
         point,
         space: space.label(),
         monitor: match space {
@@ -529,6 +545,27 @@ mod tests {
         assert!(
             d < 8.0,
             "distance {d} should measure the rotated silhouette"
+        );
+    }
+
+    #[test]
+    fn a_line_number_is_added_without_disturbing_the_answer() {
+        let file = session(
+            &[labeled(Shape::Rect(Rect::new(10, 10, 20, 20)), 0, "box")],
+            None,
+        );
+        let bare = assess(&file, Point::new(15, 15), Origin::Global, None).unwrap();
+        assert_eq!(bare.line, None, "a single point has no line to report");
+
+        let tagged = bare.clone().at_line(7);
+        assert_eq!(tagged.line, Some(7));
+        assert_eq!(
+            Verdict {
+                line: None,
+                ..tagged
+            },
+            bare,
+            "tagging changes the line and nothing else"
         );
     }
 

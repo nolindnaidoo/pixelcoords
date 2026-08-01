@@ -64,23 +64,20 @@ fn main() -> Result<()> {
         Some(cli::Command::Assert {
             ref session,
             ref point,
+            stdin,
             ref expect,
             ref label,
             space,
             monitor,
-        }) => {
-            if label.is_some() {
-                eprintln!(
-                    "pixelcoords assert: --label changed meaning in this release. \
-                     Use --expect NAME for the old behavior — the region the point \
-                     must land in. --label now restricts which regions a command \
-                     looks at, matching find and emit, and assert accepts it with \
-                     that meaning in the next release."
-                );
-                std::process::exit(2)
-            }
-            assert_command(session, point, expect.as_deref(), space, monitor)
-        }
+        }) => assert_command(
+            session,
+            point.as_deref(),
+            stdin,
+            expect.as_deref(),
+            label.as_deref(),
+            space,
+            monitor,
+        ),
         Some(cli::Command::Emit {
             ref session,
             format,
@@ -506,14 +503,36 @@ fn emit_snippet(
 /// difference.
 fn assert_command(
     session: &std::path::Path,
-    point: &str,
+    point: Option<&str>,
+    stdin: bool,
     expect: Option<&str>,
+    label: Option<&str>,
     space: cli::SpaceArg,
     monitor: Option<usize>,
 ) -> Result<()> {
     use pixelcoords_core::report::{Command, Report};
 
-    let verdict = match assess_session(session, point, expect, space, monitor) {
+    // `--label` is declared purely so it can be refused here. Letting clap
+    // reject it as unknown would say "no such flag" about one that worked
+    // last release and returns next release meaning something else.
+    if label.is_some() {
+        eprintln!(
+            "pixelcoords assert: --label changed meaning in this release. \
+             Use --expect NAME for the old behavior — the region the point \
+             must land in. --label now restricts which regions a command \
+             looks at, matching find and emit, and assert accepts it with \
+             that meaning in the next release."
+        );
+        std::process::exit(2)
+    }
+
+    let scored = if stdin {
+        assess_stream(session, std::io::stdin().lock(), expect, space, monitor)
+    } else {
+        // clap guarantees one of the two is present.
+        assess_session(session, point.unwrap_or_default(), expect, space, monitor).map(|v| vec![v])
+    };
+    let verdicts = match scored {
         Ok(v) => v,
         Err(e) => {
             eprintln!("pixelcoords assert: {e:#}");
@@ -522,10 +541,10 @@ fn assert_command(
     };
     // No `captured_utc`: scoring a point is pure session math, and
     // stamping a time on it would imply a capture that never happened.
-    let hit = verdict.hit;
-    let report = Report::offline(Command::Assert, hit, vec![verdict]);
+    let ok = verdicts.iter().all(|v| v.hit);
+    let report = Report::offline(Command::Assert, ok, verdicts);
     println!("{}", serde_json::to_string_pretty(&report)?);
-    if hit {
+    if ok {
         return Ok(());
     }
     std::process::exit(1)
@@ -536,7 +555,7 @@ fn assert_command(
 fn assess_session(
     path: &std::path::Path,
     point_arg: &str,
-    label: Option<&str>,
+    expect: Option<&str>,
     space: cli::SpaceArg,
     monitor: Option<usize>,
 ) -> Result<pixelcoords_core::verdict::Verdict> {
@@ -544,8 +563,57 @@ fn assess_session(
     let point = parse_point(point_arg)?;
     let space = resolve_space(space, monitor, &session)?;
     Ok(pixelcoords_core::verdict::assess(
-        &session, point, space, label,
+        &session, point, space, expect,
     )?)
+}
+
+/// Score a stream of points against one session.
+///
+/// The session is read and the space resolved **once**, which is the
+/// whole reason this exists: a thousand `assert` processes pay a thousand
+/// session parses to answer a question the first one already had the data
+/// for.
+///
+/// A malformed line aborts the run naming the line, and nothing is
+/// printed. Scoring the first six points of a trajectory and stopping
+/// would report a pass rate over a prefix, which is worse than no answer
+/// — the caller cannot see that it happened.
+fn assess_stream<R: std::io::BufRead>(
+    path: &std::path::Path,
+    reader: R,
+    expect: Option<&str>,
+    space: cli::SpaceArg,
+    monitor: Option<usize>,
+) -> Result<Vec<pixelcoords_core::verdict::Verdict>> {
+    use pixelcoords_core::points::{Line, parse_line};
+
+    let session = load_session(path)?;
+    let space = resolve_space(space, monitor, &session)?;
+
+    let mut verdicts = Vec::new();
+    for (offset, text) in reader.lines().enumerate() {
+        let number = offset + 1;
+        let text = text.with_context(|| format!("reading line {number}"))?;
+        let parsed = parse_line(&text).map_err(|e| anyhow::anyhow!("line {number}: {e}"))?;
+        let Line::Point {
+            point,
+            expect: per_line,
+        } = parsed
+        else {
+            continue;
+        };
+        // A per-line label overrides the run's --expect for that line
+        // only, so one stream can score a heterogeneous trajectory.
+        let wanted = per_line.as_deref().or(expect);
+        let verdict = pixelcoords_core::verdict::assess(&session, point, space, wanted)
+            .map_err(|e| anyhow::anyhow!("line {number}: {e}"))?;
+        verdicts.push(verdict.at_line(number));
+    }
+    anyhow::ensure!(
+        !verdicts.is_empty(),
+        "no points on stdin — every line was blank or a comment"
+    );
+    Ok(verdicts)
 }
 
 /// Read a `session.json` — given directly, or found inside a directory —
@@ -1731,6 +1799,179 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// The stream is scored against one session read once, so this drives
+    /// the same function `--stdin` does with a reader that is not a
+    /// process.
+    fn score(
+        dir: &std::path::Path,
+        stream: &str,
+        expect: Option<&str>,
+    ) -> Vec<pixelcoords_core::verdict::Verdict> {
+        super::assess_stream(
+            dir,
+            std::io::Cursor::new(stream),
+            expect,
+            crate::cli::SpaceArg::Global,
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_stream_scores_every_point_in_order_and_numbers_the_lines() {
+        let dir = write_test_session("pixelcoords-test-assert-stream");
+        let verdicts = score(&dir, "15,25\n500,500\n20,30\n", None);
+
+        assert_eq!(verdicts.len(), 3);
+        assert_eq!(
+            verdicts.iter().map(|v| v.hit).collect::<Vec<_>>(),
+            [true, false, true],
+            "input order is the output order"
+        );
+        assert_eq!(
+            verdicts.iter().map(|v| v.line).collect::<Vec<_>>(),
+            [Some(1), Some(2), Some(3)]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn blank_lines_and_comments_do_not_consume_line_numbers() {
+        let dir = write_test_session("pixelcoords-test-assert-stream-skips");
+        // Line numbers count input lines, not scored points: a caller
+        // fixing "line 4" has to be able to find line 4 in their file.
+        let verdicts = score(&dir, "# the login flow\n\n15,25\n", None);
+        assert_eq!(verdicts.len(), 1);
+        assert_eq!(verdicts[0].line, Some(3));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Two labeled regions side by side, so a per-line label can name a
+    /// different one than the run does.
+    fn write_two_label_session(name: &str) -> std::path::PathBuf {
+        use pixelcoords_core::geometry::{Rect, Shape};
+        use pixelcoords_core::selection::Selection;
+        use pixelcoords_core::session::{MonitorRecord, SessionFile};
+        let mut cancel = Selection::new(Shape::Rect(Rect::new(10, 20, 30, 40)), 0);
+        cancel.label = "cancel".into();
+        let mut submit = Selection::new(Shape::Rect(Rect::new(100, 20, 30, 40)), 0);
+        submit.label = "submit".into();
+        let file = SessionFile::build(
+            "test",
+            "2026-07-27T00:00:00Z".into(),
+            vec![MonitorRecord {
+                index: 0,
+                name: "Main".into(),
+                primary: true,
+                origin_px: Point::new(0, 0),
+                size_px: Size::new(1920, 1080),
+                scale: 1.0,
+            }],
+            &[cancel, submit],
+            &["c0.png".into(), "c1.png".into()],
+            None,
+        );
+        let dir = std::env::temp_dir().join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("session.json"),
+            serde_json::to_string(&file).unwrap(),
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_per_line_label_overrides_the_run_wide_expectation() {
+        let dir = write_two_label_session("pixelcoords-test-assert-stream-labels");
+        // Every point lands in "cancel". The run expects "submit", so a
+        // bare line misses — and a line naming "cancel" hits, because its
+        // own label decides that row and nothing else.
+        let verdicts = score(&dir, "15,25\n15,25,cancel\n15,25\n", Some("submit"));
+        assert_eq!(
+            verdicts.iter().map(|v| v.hit).collect::<Vec<_>>(),
+            [false, true, false],
+            "the override applies to its line only, not to the rest"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_label_the_session_does_not_have_aborts_the_run() {
+        let dir = write_two_label_session("pixelcoords-test-assert-stream-unknown");
+        // Naming a region that does not exist is a malformed question,
+        // not a miss: the caller asked about something the session cannot
+        // answer, and scoring it 0 would hide the typo.
+        let err = super::assess_stream(
+            &dir,
+            std::io::Cursor::new("15,25\n15,25,nope\n"),
+            None,
+            crate::cli::SpaceArg::Global,
+            None,
+        )
+        .unwrap_err();
+        let text = format!("{err:#}");
+        assert!(text.contains("line 2"), "got: {text}");
+        assert!(
+            text.contains("cancel") && text.contains("submit"),
+            "got: {text}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_malformed_line_aborts_the_run_naming_it() {
+        let dir = write_test_session("pixelcoords-test-assert-stream-bad");
+        let err = super::assess_stream(
+            &dir,
+            std::io::Cursor::new("15,25\n12,x\n20,30\n"),
+            None,
+            crate::cli::SpaceArg::Global,
+            None,
+        )
+        .unwrap_err();
+        let text = format!("{err:#}");
+        assert!(text.contains("line 2"), "got: {text}");
+        assert!(text.contains("\"x\""), "got: {text}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_stream_with_no_points_is_a_malformed_question_not_a_pass() {
+        let dir = write_test_session("pixelcoords-test-assert-stream-empty");
+        // `ok` is "every point hit", and vacuous truth over zero points
+        // would report success for a run that scored nothing.
+        let err = super::assess_stream(
+            &dir,
+            std::io::Cursor::new("# nothing here\n\n"),
+            None,
+            crate::cli::SpaceArg::Global,
+            None,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("no points"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_single_point_verdict_carries_no_line_so_the_shapes_stay_compatible() {
+        let dir = write_test_session("pixelcoords-test-assert-shape-compat");
+        let single =
+            super::assess_session(&dir, "15,25", None, crate::cli::SpaceArg::Global, None).unwrap();
+        assert_eq!(single.line, None);
+
+        let json = serde_json::to_value(&single).unwrap();
+        assert!(
+            json.get("line").is_none(),
+            "a batch adds `line`; it never removes a field a single run had"
+        );
+        let batched = serde_json::to_value(&score(&dir, "15,25\n", None)[0]).unwrap();
+        for key in ["point", "space", "hit", "contained_in"] {
+            assert_eq!(json[key], batched[key], "{key} differs between the two");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn assess_session_accepts_the_json_path_and_defaults_the_monitor() {
         let dir = write_test_session("pixelcoords-test-assert-direct-path");
@@ -2283,7 +2524,7 @@ mod tests {
         else {
             panic!("expected the assert subcommand")
         };
-        assert_eq!(point, "-1920,540");
+        assert_eq!(point.as_deref(), Some("-1920,540"));
         assert_eq!(expect.as_deref(), Some("submit"));
         assert_eq!(space, crate::cli::SpaceArg::Global);
     }
