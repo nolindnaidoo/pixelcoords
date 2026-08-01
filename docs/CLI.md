@@ -275,6 +275,12 @@ slowest. `polls` and `elapsed_ms` are both reported.
 called `--tolerance`, which is `diff`'s percentage of differing pixels —
 different quantity, different direction, different default.
 
+**If `--for change` fires immediately, lower `--min-score`.** A blinking
+cursor or a clock inside the watched region is enough to trip the default
+0.9 floor on its own — a hundred high-contrast pixels on an otherwise
+plain region can cost 0.2 of score. `--min-score 0.5` ignores that and
+still catches a real change. `docs/OUTPUT.md` has the measured numbers.
+
 ## `diff`
 
 Compare each region's saved crop against the same rectangle of the screen

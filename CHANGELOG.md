@@ -56,6 +56,15 @@ and milliseconds to another. `--min-score` is a correlation in `0..=1` and
 is deliberately not spelled `--tolerance`, which is `diff`'s percentage of
 pixels — different quantity, different direction, different default.
 
+`--min-score` also turns out to be the answer to the one rough edge found
+while verifying this on hardware: a blinking text cursor inside a watched
+region will fire `--for change` on its own. Correlation weighs a few
+very high-contrast pixels heavily when the rest of the region is plain —
+101 pixels out of 38,400 measured at 0.805, under the 0.9 floor. Lowering
+the floor ignores the cursor and still catches a real change. Documented
+with the numbers in `docs/OUTPUT.md`; `--for match` is unaffected, because
+polling absorbs the flicker.
+
 `polls` and `elapsed_ms` are new optional fields on the shared report
 envelope, absent from every command that does not loop. They are
 provenance in the same sense `captured_utc` is: how the answer was

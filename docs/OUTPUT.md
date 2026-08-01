@@ -449,6 +449,36 @@ This is inherent to the metric, not a bug to route around. A caller who
 means "any pixel differs at all" wants `diff --tolerance 0`, which
 compares RGB directly.
 
+### If `--for change` fires immediately, lower `--min-score`
+
+The mirror of the above. Correlation is also *disproportionately*
+sensitive to a few very high-contrast pixels on a region that is
+otherwise low-detail — the same reason a mouse pointer costs about 0.17
+of match score on a plain region and nothing at all on a busy one.
+
+A blinking text cursor is the common case. Measured on a real 240×160
+region: **101 pixels** out of 38,400 — 0.26% of it — flipping between
+near-black and near-white dropped the score from 1.0 to **0.805**. That
+is under the default 0.9 floor, so `--for change` fires on the blink
+rather than on whatever you were waiting for. It fires within a second,
+every time.
+
+`--min-score` is the fix. At `--min-score 0.5`, the same region stops
+firing on the cursor and a genuine change still trips it, because a real
+change scores far lower than a blink does:
+
+```bash
+pixelcoords wait --session shots --for change --min-score 0.5
+```
+
+Watching a region with a clock, a spinner, a caret, or a progress
+indicator in it? Either lower the floor or mark a region without one.
+
+`--for match` does not need this. It keeps polling, and a blinking
+region matches on whichever poll catches it in the state the crop was
+saved in — the retry absorbs the flicker that a single `find` would
+report as a miss.
+
 ## Did this still look right: `diff`
 
 `assert` answers whether a point is inside a region; `find` answers where
