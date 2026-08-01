@@ -323,6 +323,68 @@ was captured. The macOS conversions are verified against real hardware;
 the Windows pyautogui convention follows its documented behavior and has
 not yet been verified on hardware.
 
+## Where do I click: `resolve`
+
+Everything an executor needs already lived in this repo, in pieces each
+consumer had to reassemble: the region and its monitor's scale in the
+session, the interior point in `click_point`, drift correction in `find`,
+and the per-platform unit convention in `emit`. Reassembling them is
+where DPI goes wrong. `resolve` is that composition, done once.
+
+```bash
+pixelcoords resolve --session shots
+pixelcoords resolve --session shots --label submit --units logical
+pixelcoords resolve --session shots --space monitor --relocate
+```
+
+Exit codes: **0** every label resolved; **1** one could not be — with
+`--relocate`, a region that was not found unambiguously; **2** the
+question was malformed.
+
+```json
+{
+  "schema": 2,
+  "command": "resolve",
+  "captured_utc": "2026-08-01T14:02:11Z",
+  "ok": true,
+  "results": [
+    { "index": 1, "label": "submit", "monitor": 1, "scale": 2.0,
+      "space": "global", "units": "logical",
+      "point": { "x": 1020, "y": 115 },
+      "region": { "x": 1010, "y": 100, "w": 20, "h": 30 },
+      "score": 0.998, "delta": { "dx": 0, "dy": -120 } }
+  ]
+}
+```
+
+`captured_utc`, `score`, and `delta` appear only with `--relocate` —
+without it nothing was captured, and claiming a capture time would be a
+lie about where the answer came from.
+
+What the fields mean, honestly:
+
+- **`units: auto`** resolves to `logical` on macOS and `physical` on
+  Windows and X11, matching what those platforms' input APIs take. It is
+  the one value most callers want, and the mismatch it hides is the
+  single most common way screen coordinates get clicked in the wrong
+  place.
+- **`scale`** is reported so a consumer can check the conversion instead
+  of trusting it. Each selection converts through *its own* monitor's
+  scale — there is no desktop-wide logical space, and pretending
+  otherwise breaks the moment two displays disagree.
+- **`point` in logical units is the physical interior point converted**,
+  not an interior point of the converted region. A consumer clicks in
+  logical points and the window server maps that back to physical,
+  landing inside the region a human marked. Deriving it from the
+  rounded-down shape would optimize a number nothing clicks — so `point`
+  and `region` may round differently by a pixel on a scaled display.
+- **`space: monitor`** needs no monitor index: every row says which
+  monitor it is on, and each is answered in that monitor's coordinates.
+- **A missing `score` with `--relocate`** means the region was not found,
+  or was found in more than one place. The row still reports its stored
+  coordinates, and `ok` is false — acting on the wrong instance is worse
+  than not acting.
+
 ## Self-healing coordinates: `find`
 
 A session's coordinates describe one frozen instant; the moment the UI

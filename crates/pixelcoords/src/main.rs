@@ -103,6 +103,13 @@ fn main() -> Result<()> {
             let path = resolve_resume_session(Some(session), false, &root)?;
             rename_session(&path, name)
         }
+        Some(cli::Command::Resolve {
+            ref session,
+            ref label,
+            space,
+            units,
+            relocate,
+        }) => resolve_command(session, label.as_deref(), space, units, relocate),
         Some(cli::Command::Find {
             ref session,
             ref label,
@@ -233,6 +240,114 @@ fn monitor_from_record(record: &pixelcoords_core::session::MonitorRecord) -> cap
         size_native: Size::new(from(record.size_px.w), from(record.size_px.h)),
         scale: record.scale,
     }
+}
+
+/// The `resolve` subcommand: print the report, exit 0 when every label
+/// resolved, 1 when one did not, 2 on a malformed question.
+fn resolve_command(
+    session: &std::path::Path,
+    label: Option<&str>,
+    space: cli::SpaceArg,
+    units: cli::UnitsArg,
+    relocate: bool,
+) -> Result<()> {
+    let report = match run_resolve(&XcapCapture, session, label, space, units, relocate) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("pixelcoords resolve: {e:#}");
+            std::process::exit(2)
+        }
+    };
+    let ok = report.ok;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if ok {
+        return Ok(());
+    }
+    std::process::exit(1)
+}
+
+/// Resolve a session's labels to the points an executor should act on.
+///
+/// Without `--relocate` this is pure session math — headless, instant, no
+/// capture and no permission. With it, one capture per monitor serves
+/// every label, and each region's drift is applied before the units are
+/// converted.
+fn run_resolve<P: CaptureProvider>(
+    provider: &P,
+    path: &std::path::Path,
+    label: Option<&str>,
+    space: cli::SpaceArg,
+    units: cli::UnitsArg,
+    relocate: bool,
+) -> Result<pixelcoords_core::report::Report<pixelcoords_core::resolve::Resolution>> {
+    use pixelcoords_core::report::{Command, Report};
+    use pixelcoords_core::{locate, resolve};
+
+    let session = load_session(path)?;
+    // Deliberately not `resolve_space`: that asks which monitor an
+    // incoming point belongs to, and needs `--monitor` to disambiguate.
+    // `resolve` has no incoming point. Monitor space here means each
+    // selection in *its own* monitor's coordinates, and every row already
+    // reports which monitor that is — so the index carries nothing.
+    let origin = match space {
+        cli::SpaceArg::Global => pixelcoords_core::space::Origin::Global,
+        cli::SpaceArg::Window => pixelcoords_core::space::Origin::Window,
+        cli::SpaceArg::Monitor => pixelcoords_core::space::Origin::Monitor(0),
+    };
+    let units = pixelcoords_core::space::Units::from(units).resolve(EMIT_PLATFORM);
+
+    if !relocate {
+        let rows = resolve::resolve(&session, label, origin, units, &|_| None)?;
+        let ok = resolve::all_resolved(&rows, false);
+        return Ok(Report::offline(Command::Resolve, ok, rows));
+    }
+
+    let regions = regions::load(&session, &session_dir(path), label)?;
+    let frames = regions::capture_frames(provider, &session, &regions)?;
+    let gray: std::collections::HashMap<usize, locate::GrayImage> = frames
+        .into_iter()
+        .map(|(index, img)| {
+            let (w, h) = (img.width() as usize, img.height() as usize);
+            (index, locate::GrayImage::from_rgba(w, h, img.as_raw()))
+        })
+        .collect();
+
+    // An ambiguous or low-scoring match yields no drift, so the row comes
+    // back without a score and `ok` goes false — a region found in two
+    // places has no point worth handing to an executor.
+    let drift: std::collections::HashMap<usize, (f64, locate::Delta)> = regions
+        .iter()
+        .filter_map(|region| {
+            let found = locate::locate(
+                &gray[&region.monitor],
+                &region.template(),
+                Some(region.origin),
+            )
+            .ok()?;
+            let moved = found.score >= locate::SCORE_FLOOR && !found.ambiguous;
+            moved.then(|| {
+                (
+                    region.index,
+                    (
+                        found.score,
+                        locate::Delta {
+                            dx: found.x - region.origin.x,
+                            dy: found.y - region.origin.y,
+                        },
+                    ),
+                )
+            })
+        })
+        .collect();
+
+    let rows = resolve::resolve(&session, label, origin, units, &|index| {
+        drift.get(&index).copied()
+    })?;
+    let ok = resolve::all_resolved(&rows, true);
+    let captured = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .context("formatting timestamp")?;
+    Ok(Report::captured(Command::Resolve, captured, ok, rows))
 }
 
 /// Re-locate every selection of a saved session in a fresh capture, using
@@ -2125,6 +2240,85 @@ mod tests {
             Some(pixelcoords_core::locate::Delta { dx: 60, dy: 24 })
         );
         assert_eq!(r.new_px, Some(Shape::Rect(Rect::new(90, 44, 24, 16))));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_without_relocate_never_captures() {
+        // The fixture has no crop file, so any capture path would fail
+        // reading it. Succeeding proves the headless promise: pure session
+        // math, no permission, no screen.
+        let dir = write_find_fixture("pixelcoords-test-resolve-headless", false);
+        let report = super::run_resolve(
+            &ShiftedScreen { scale: 1.0 },
+            &dir,
+            None,
+            crate::cli::SpaceArg::Global,
+            crate::cli::UnitsArg::Physical,
+            false,
+        )
+        .unwrap();
+        assert!(report.ok);
+        assert!(
+            report.captured_utc.is_none(),
+            "nothing was captured, so nothing may claim a capture time"
+        );
+        // The fixture's rect is (30, 20, 24, 16) on a scale-1 monitor.
+        assert_eq!(report.results[0].point, Point::new(42, 28));
+        assert!(report.results[0].score.is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_relocate_moves_the_point_by_the_drift() {
+        // Same fake `find` uses: the patch sits 60 right and 24 down from
+        // where the session recorded it.
+        let dir = write_find_fixture("pixelcoords-test-resolve-relocate", true);
+        let report = super::run_resolve(
+            &ShiftedScreen { scale: 1.0 },
+            &dir,
+            None,
+            crate::cli::SpaceArg::Global,
+            crate::cli::UnitsArg::Physical,
+            true,
+        )
+        .unwrap();
+        assert!(report.ok);
+        assert!(report.captured_utc.is_some(), "a capture happened");
+        let r = &report.results[0];
+        assert_eq!(
+            r.delta,
+            Some(pixelcoords_core::locate::Delta { dx: 60, dy: 24 })
+        );
+        assert_eq!(
+            r.point,
+            Point::new(102, 52),
+            "the click point follows the region, not the stale coordinates"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resolve_units_auto_follows_the_build_platform() {
+        let dir = write_find_fixture("pixelcoords-test-resolve-auto", false);
+        let auto = super::run_resolve(
+            &ShiftedScreen { scale: 1.0 },
+            &dir,
+            None,
+            crate::cli::SpaceArg::Global,
+            crate::cli::UnitsArg::Auto,
+            false,
+        )
+        .unwrap();
+        // The fixture monitor is scale 1.0, so both units agree on the
+        // number — what is asserted is that `auto` resolved to whatever
+        // this platform's input APIs want and said so.
+        let expected = if cfg!(target_os = "macos") {
+            "logical"
+        } else {
+            "physical"
+        };
+        assert_eq!(auto.results[0].units, expected);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

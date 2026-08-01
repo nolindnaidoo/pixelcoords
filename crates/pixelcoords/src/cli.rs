@@ -9,6 +9,7 @@ Examples:
   pixelcoords resume                   pick a saved session, keep editing
   pixelcoords assert --session <dir> --point 812,440 --expect submit
   pixelcoords assert --session <dir> --stdin < points.txt
+  pixelcoords resolve --session <dir> --label submit --units auto
   pixelcoords emit --session <dir> --format pyautogui
   pixelcoords find --session <dir>
   pixelcoords doctor --json
@@ -165,6 +166,27 @@ pub enum Command {
         #[arg(long, value_name = "TEXT")]
         name: String,
     },
+    /// Where to act for a session's labels, right now: the click point per
+    /// selection in the space and units your API speaks. Exits 0 resolved,
+    /// 1 not resolvable, 2 on error
+    Resolve {
+        /// Path to a session.json, or the directory containing one
+        #[arg(long, value_name = "PATH")]
+        session: PathBuf,
+        /// Resolve only selections with this label (case-insensitive)
+        #[arg(long, value_name = "TEXT")]
+        label: Option<String>,
+        /// Which origin the answer is measured from
+        #[arg(long, value_enum, default_value_t = SpaceArg::Global)]
+        space: SpaceArg,
+        /// Which scale the answer is expressed in
+        #[arg(long, value_enum, default_value_t = UnitsArg::Auto)]
+        units: UnitsArg,
+        /// Capture the screen first and correct for drift, so the answer
+        /// describes where the region is now rather than where it was
+        #[arg(long)]
+        relocate: bool,
+    },
     /// Re-locate a session's regions in a fresh capture using their saved
     /// crops: prints a JSON report; exits 0 when every region is found
     /// unambiguously, 1 otherwise, 2 on error
@@ -188,6 +210,29 @@ pub enum FormatArg {
     Cliclick,
     /// X11 shell: xdotool mousemove x y click 1 — physical pixels
     Xdotool,
+}
+
+/// The scale a coordinate is expressed in. A separate question from
+/// `--space`, which says where the origin is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum UnitsArg {
+    /// Whatever this platform's input APIs expect: logical points on
+    /// macOS, physical pixels on Windows and X11
+    Auto,
+    /// Device pixels — the session's own grid
+    Physical,
+    /// Points, device pixels divided by the monitor's DPI scale
+    Logical,
+}
+
+impl From<UnitsArg> for pixelcoords_core::space::Units {
+    fn from(arg: UnitsArg) -> Self {
+        match arg {
+            UnitsArg::Auto => Self::Auto,
+            UnitsArg::Physical => Self::Physical,
+            UnitsArg::Logical => Self::Logical,
+        }
+    }
 }
 
 /// Which of the session's coordinate spaces `assert --point` is in.
