@@ -7,6 +7,43 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
+## Unreleased
+
+### Three more `emit` targets: powershell, applescript, ydotool
+
+`emit` spoke pyautogui, cliclick, and xdotool — Python, macOS shell, X11
+shell. That left three real gaps: Windows without Python, macOS without
+Homebrew, and Wayland at all, where `xdotool` simply cannot reach.
+
+**`powershell`** uses `SetCursorPos` and `mouse_event` through an
+`Add-Type` P/Invoke preamble, so it needs nothing installed. Physical
+pixels: the Win32 cursor APIs speak physical on a per-monitor-DPI-aware
+process, which is what the session records on Windows. The preamble is
+emitted once rather than per click — pasting `Add-Type` twice for the
+same type is an error, not a no-op, so a per-click preamble would break
+on the second selection.
+
+**`applescript`** uses System Events, so it needs nothing installed
+either. Logical points, like cliclick. One `tell` block wraps every
+click, and the snippet says in a comment that System Events needs
+Accessibility permission, because finding that out from a silently
+ineffective click is worse.
+
+**`ydotool`** completes the `--pick` story. Physical pixels: ydotool
+writes to a uinput device below the compositor, so it addresses the raw
+device grid. The header says the `ydotoold` daemon has to be running
+rather than pretending the snippet is turnkey.
+
+Each converts through *its own* selection's monitor scale, so one snippet
+off a mixed-DPI desktop has the scale-1 selection unmoved and the scale-2
+one halved — checked by a test that runs the same two-monitor session
+through every format.
+
+No `json` target, though the original plan had one. `resolve` shipped in
+0.4.0 and *is* that output; a `json` emit target would be the same
+document under a second name, on the command whose whole remit is code a
+human pastes.
+
 ## 0.4.0
 
 ### `wait`: block until the screen settles

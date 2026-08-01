@@ -315,6 +315,17 @@ place hand-written glue gets silently burned:
 | `pyautogui` | logical points on macOS, physical pixels on Windows/X11 | pyautogui makes itself DPI-aware on import, hence physical on Windows |
 | `cliclick` | logical points | negative coordinates get cliclick's `=` escape |
 | `xdotool` | physical pixels | `global_px` verbatim, no conversion |
+| `powershell` | physical pixels | Windows with nothing installed. The Win32 cursor APIs speak physical on a per-monitor-DPI-aware process. The `Add-Type` P/Invoke preamble is emitted **once**, not per click — pasting it twice for the same type is an error, not a no-op |
+| `applescript` | logical points | macOS with nothing installed. Needs Accessibility permission (System Settings ▸ Privacy & Security ▸ Accessibility); the snippet says so in a comment |
+| `ydotool` | physical pixels | the Wayland answer, where `xdotool` cannot reach. ydotool writes to a uinput device below the compositor, so it addresses the raw device grid. Needs `ydotoold` running — the snippet says so rather than pretending it is turnkey |
+
+**No `json` target, deliberately.** It was planned, then dropped: it
+would have been [`resolve`](#where-do-i-click-resolve)'s output under a
+second name, on the command whose whole remit is code a human pastes.
+"Add my tool" is answered with "consume `resolve`". `emit` also takes
+neither `--space` nor `--units` — each format *defines* its convention,
+and an override would let you generate code that is wrong for the tool it
+targets.
 
 Logical conversion divides by each selection's own monitor scale, so
 mixed-DPI setups come out right per selection. Sessions are

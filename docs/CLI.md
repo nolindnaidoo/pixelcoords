@@ -201,8 +201,16 @@ tool's own coordinate convention.
 | Flag | Meaning |
 |------|---------|
 | `--session <PATH>` | The session |
-| `--format pyautogui\|cliclick\|xdotool` | The automation tool |
+| `--format <TOOL>` | `pyautogui`, `cliclick`, `xdotool`, `powershell`, `applescript`, or `ydotool` |
 | `--label <TEXT>` | Emit only this label |
+
+Each format carries its own coordinate convention, and `emit` takes
+neither `--space` nor `--units` because of it: overriding one would let
+you generate code that is wrong for the tool it targets. `powershell`,
+`applescript`, and `ydotool` cover the three cases the others miss —
+Windows without Python, macOS without Homebrew, and Wayland at all.
+`docs/OUTPUT.md` has the per-format table with the caveats each one
+carries.
 
 ## `resolve`
 
