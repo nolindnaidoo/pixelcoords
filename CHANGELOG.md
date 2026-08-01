@@ -9,6 +9,39 @@ version number, for what changed under you.
 
 ## Unreleased
 
+### The pixel under the cursor, read out and recorded
+
+Every tool in this one's comparison set shows the color under the
+cursor; this one did not. A frozen screen makes it trivial — the pixel
+cannot change while you read it — and the cursor chip now carries it:
+`1234, 567  #3A7BD5`. Holding `M` puts the same hex under the loupe,
+where at that zoom *which* pixel it describes is finally unambiguous.
+
+It is more than a readout, which is the reason to bother. Every
+selection records the color at its **click point** — the same interior
+point `assert` and `emit` aim at — so `session.json` now says what was
+on the pixel automation will actually click. A consumer can check that
+the button was still blue when the region was marked without any new
+tooling. `assert --color` becomes possible later precisely because the
+value is recorded now; it is not in this change.
+
+Both readouts sample the frozen capture rather than the composed frame.
+By the time the chip is drawn, outlines and captions are already painted
+over the image, and sampling that would report the color of the chrome
+sitting on the pixel instead of the pixel. There is a test that parks the
+cursor under a selection's own outline and fails if the reported color is
+the outline's.
+
+The recorded value is resampled on every save rather than remembered,
+which is what keeps a resumed session honest: the frames are the
+session's own screenshots, so a selection that moved gets the color it
+moved onto and one that did not gets the identical byte back. A region
+hanging off an edge, whose click point lands outside the frame, records
+no color rather than the nearest one.
+
+`color` is optional and additive — the schema stays 1, old sessions load
+unchanged, and consumers that do not know the field ignore it.
+
 ### Three more `emit` targets: powershell, applescript, ydotool
 
 `emit` spoke pyautogui, cliclick, and xdotool — Python, macOS shell, X11

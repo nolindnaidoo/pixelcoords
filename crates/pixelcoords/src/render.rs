@@ -136,7 +136,7 @@ pub fn compose(buffer: &mut [u32], size: Size, background: &[u32], state: &Frame
         );
     }
 
-    draw_cursor_readout(&mut canvas, size, state);
+    draw_cursor_readout(&mut canvas, background, size, state);
     draw_hud(&mut canvas, size, state);
     draw_loupe(&mut canvas, background, size, state);
 }
@@ -223,6 +223,24 @@ fn draw_loupe(canvas: &mut Canvas, background: &[u32], size: Size, state: &Frame
         scale,
     );
     canvas.draw_rect_outline(Rect::new(x0, y0, edge_len, edge_len), PANEL_MUTED, scale);
+
+    // The center pixel's hex, under the box. At loupe zoom *which* pixel
+    // the number describes is finally unambiguous, which it is not in the
+    // cursor chip when the pointer sits on an edge.
+    let hex = sample(background, size, cursor.x, cursor.y).to_hex();
+    let hex_w = font::text_width(hex.chars().count(), scale);
+    let hex_x = x0 + (edge_len - hex_w) / 2;
+    let hex_y = y0 + edge_len + 2 * scale;
+    canvas.dim_rect(
+        Rect::new(
+            hex_x - 2 * scale,
+            hex_y - scale,
+            hex_w + 4 * scale,
+            font::line_height(scale) + 2 * scale,
+        ),
+        PANEL_DIM,
+    );
+    canvas.draw_text(hex_x, hex_y, &hex, Color::WHITE, scale);
 }
 
 /// One background pixel as a Color; outside the frame reads as black.
@@ -261,10 +279,19 @@ fn draw_wordmark(
 /// The live readout: monitor-local coordinates in a small chip beside
 /// the pointer, always current — the number automation actually wants,
 /// visible before any shape exists.
-fn draw_cursor_readout(canvas: &mut Canvas, size: Size, state: &FrameState) {
+fn draw_cursor_readout(canvas: &mut Canvas, background: &[u32], size: Size, state: &FrameState) {
     let Some(cursor) = state.cursor else { return };
     let scale = state.ui_scale.max(1);
-    let text = format!("{}, {}", cursor.x, cursor.y);
+    // Read from `background`, not the buffer being composed: by the time
+    // the chip is drawn the buffer already carries outlines and captions,
+    // and sampling that would report the color of the chrome sitting over
+    // the pixel rather than the pixel.
+    let text = format!(
+        "{}, {}  {}",
+        cursor.x,
+        cursor.y,
+        sample(background, size, cursor.x, cursor.y).to_hex()
+    );
     let text_w = font::text_width(text.chars().count(), scale);
     let text_h = font::line_height(scale);
     let off = 14 * scale;
@@ -447,6 +474,82 @@ mod tests {
         };
         compose(&mut buffer, Size::new(W, H), &background, &state);
         buffer
+    }
+
+    /// Compose with the cursor parked on a pixel of a known color, and a
+    /// committed selection whose outline is drawn *over* that same pixel.
+    /// The readout must report the frozen pixel, not the outline.
+    fn frame_with_cursor_over_an_outline(loupe: bool) -> (Vec<u32>, Color) {
+        const HIDDEN: u32 = 0x0000_3A7B;
+        let at = Point::new(600, 20);
+        let mut background = vec![0x0000_1122u32; (W * H) as usize];
+        background[(at.y * W + at.x) as usize] = HIDDEN;
+
+        let mut selections = SelectionSet::new();
+        // Its top-left corner lands exactly on `at`, so the complete-color
+        // outline paints over the pixel before the chip is drawn.
+        selections.add(Selection::new(Shape::Rect(Rect::new(600, 20, 40, 30)), 0));
+
+        let mut buffer = vec![0u32; (W * H) as usize];
+        let state = FrameState {
+            selections: &selections,
+            monitor: 0,
+            target: None,
+            preview: None,
+            editing: None,
+            flash: None,
+            strings: &EN,
+            style: Config::default().resolve_style().unwrap(),
+            ui_scale: 1,
+            panel_origin: None,
+            panel_hidden: false,
+            tool: ToolKind::Rect,
+            polygon_sides: 6,
+            cursor: Some(at),
+            loupe,
+            naming: None,
+        };
+        compose(&mut buffer, Size::new(W, H), &background, &state);
+        (
+            buffer,
+            Color {
+                r: 0x00,
+                g: 0x3A,
+                b: 0x7B,
+            },
+        )
+    }
+
+    #[test]
+    fn the_readout_samples_the_frozen_frame_not_the_chrome_over_it() {
+        let (buffer, hidden) = frame_with_cursor_over_an_outline(false);
+        let style = Config::default().resolve_style().unwrap();
+
+        // The premise: the outline really did paint over that pixel, so a
+        // naive sample of the composed buffer would read the outline.
+        assert_eq!(
+            buffer[(20 * W + 600) as usize],
+            style.complete.to_0rgb(),
+            "the selection outline covers the sampled pixel"
+        );
+        assert_ne!(hidden.to_0rgb(), style.complete.to_0rgb());
+
+        // And the chip drew *something* — the hex text lands in the pad
+        // offset from the cursor, so the region right of it is no longer
+        // pure background.
+        let chip_row = 20 + 14;
+        let painted = (600..760).any(|x| buffer[(chip_row * W + x) as usize] != 0x0000_1122);
+        assert!(painted, "the cursor chip should have drawn its readout");
+    }
+
+    #[test]
+    fn the_loupe_draws_its_hex_caption() {
+        let (with_loupe, _) = frame_with_cursor_over_an_outline(true);
+        let (without, _) = frame_with_cursor_over_an_outline(false);
+        assert_ne!(
+            with_loupe, without,
+            "holding the loupe must change what is drawn"
+        );
     }
 
     #[test]

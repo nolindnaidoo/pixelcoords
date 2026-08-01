@@ -165,6 +165,16 @@ pub struct SelectionRecord {
     pub window_px: Option<Shape>,
     /// File name of this selection's PNG crop, relative to the session dir.
     pub crop: String,
+    /// The captured pixel at this selection's click point, as uppercase
+    /// `#RRGGBB`.
+    ///
+    /// The same interior point `assert` and `emit` aim at, so it
+    /// describes the pixel automation will actually click — a consumer
+    /// can sanity-check that the button was still blue when it was
+    /// marked. Optional and additive: absent in sessions written before
+    /// it existed, and the schema does not move for it.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub color: Option<String>,
 }
 
 impl SessionFile {
@@ -209,6 +219,9 @@ impl SessionFile {
                     rot_deg,
                     window_px,
                     crop: crop.clone(),
+                    // Filled by `with_colors`: the sample comes from the
+                    // frozen frame, which this crate never sees.
+                    color: None,
                 }
             })
             .collect();
@@ -241,6 +254,22 @@ impl SessionFile {
         self.platform = platform;
         self.capture = capture;
         self.name = name;
+        self
+    }
+
+    /// Attach the sampled click-point color to each selection, in the
+    /// same order [`Self::build`] took them.
+    ///
+    /// Separate from `build` because the color comes from the frozen
+    /// frames, which only the caller holds — and because a session
+    /// without colors is a valid session, so this cannot be a required
+    /// argument. A shorter slice leaves the rest without a color rather
+    /// than shifting them onto the wrong selection.
+    #[must_use]
+    pub fn with_colors(mut self, colors: &[Option<String>]) -> Self {
+        for (record, color) in self.selections.iter_mut().zip(colors) {
+            record.color.clone_from(color);
+        }
         self
     }
 }

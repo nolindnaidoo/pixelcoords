@@ -63,13 +63,29 @@ pixelcoords-captures/20260727-113542-097/
       "global_px": { "x": 520, "y": 448, "w": 300, "h": 88 },
       "rot_deg": 15,
       "window_px": { "x": 120, "y": 198, "w": 300, "h": 88 },
-      "crop": "crop-0-login-button.png"
+      "crop": "crop-0-login-button.png",
+      "color": "#3A7BD5"
     }
   ]
 }
 ```
 
-`target`, `window_px`, and `rot_deg` appear only when applicable.
+`target`, `window_px`, `rot_deg`, and `color` appear only when
+applicable.
+
+`color` is the captured pixel at the selection's **click point** — the
+same interior point `assert` and `emit` aim at — as uppercase `#RRGGBB`.
+It is the frozen screenshot's sRGB byte triple and nothing more: no
+color-space conversion is claimed, and there is no alpha, because a
+screen is opaque. A consumer can use it to sanity-check state without
+any new tooling ("the button was still blue when this was marked").
+
+It is resampled on every save rather than remembered, which is what
+keeps a resumed session honest: the frames are the session's own
+screenshots, so a selection that moved gets the color it moved onto and
+one that did not gets the identical byte back. A selection whose click
+point falls outside the frame — a region hanging off an edge — records
+no color rather than the nearest one.
 
 ### Provenance
 

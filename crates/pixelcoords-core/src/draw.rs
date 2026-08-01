@@ -23,6 +23,39 @@ impl Color {
     pub const fn to_0rgb(self) -> u32 {
         ((self.r as u32) << 16) | ((self.g as u32) << 8) | (self.b as u32)
     }
+
+    /// Uppercase `#RRGGBB`, the inverse of
+    /// [`crate::config::parse_hex_color`].
+    ///
+    /// No alpha: screens are opaque, and a captured pixel's fourth byte
+    /// says nothing about what was on screen. No color-space conversion
+    /// either — this is the captured PNG's sRGB byte triple and nothing
+    /// more, which is what the docs promise.
+    #[must_use]
+    pub fn to_hex(self) -> String {
+        format!("#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
+    }
+}
+
+/// The color of one pixel of an RGBA8 buffer, or `None` when the point
+/// lies outside it.
+///
+/// Sampled from the frozen capture rather than anything the overlay drew
+/// on top: the chrome is painted into a separate presentation buffer, so
+/// a readout taken here reports the screen, never the crosshair sitting
+/// over it.
+#[must_use]
+pub fn sample_rgba(rgba: &[u8], w: i32, h: i32, at: Point) -> Option<Color> {
+    if at.x < 0 || at.y < 0 || at.x >= w || at.y >= h {
+        return None;
+    }
+    let index = (at.y as usize * w as usize + at.x as usize) * 4;
+    let px = rgba.get(index..index + 3)?;
+    Some(Color {
+        r: px[0],
+        g: px[1],
+        b: px[2],
+    })
 }
 
 pub struct Canvas<'a> {
@@ -574,6 +607,88 @@ mod tests {
     const W: i32 = 100;
     const H: i32 = 60;
     const RED: Color = Color { r: 255, g: 0, b: 0 };
+
+    #[test]
+    fn hex_is_uppercase_and_always_six_digits() {
+        assert_eq!(RED.to_hex(), "#FF0000");
+        assert_eq!(Color { r: 0, g: 0, b: 0 }.to_hex(), "#000000");
+        assert_eq!(Color::WHITE.to_hex(), "#FFFFFF");
+        // The zero-padding is the point: #3A7BD5 must not come out as
+        // #3A7BD5 for one value and #3A7BD for another.
+        assert_eq!(
+            Color {
+                r: 0x3A,
+                g: 0x07,
+                b: 0xD5
+            }
+            .to_hex(),
+            "#3A07D5"
+        );
+    }
+
+    #[test]
+    fn hex_round_trips_through_the_config_parser() {
+        // The two directions have to agree, or a color read back out of a
+        // session would not be the one written in.
+        for color in [
+            RED,
+            Color::WHITE,
+            Color { r: 0, g: 0, b: 0 },
+            Color {
+                r: 18,
+                g: 200,
+                b: 7,
+            },
+        ] {
+            let parsed = crate::config::parse_hex_color(&color.to_hex()).unwrap();
+            assert_eq!(parsed, color, "{}", color.to_hex());
+        }
+    }
+
+    #[test]
+    fn sampling_reads_the_pixel_under_the_point() {
+        // A 3x2 RGBA buffer with a known value at (2, 1).
+        let mut rgba = vec![0u8; 3 * 2 * 4];
+        // Row 1, column 2, of a 3-wide buffer.
+        let index = (3 + 2) * 4;
+        rgba[index..index + 4].copy_from_slice(&[10, 20, 30, 255]);
+        assert_eq!(
+            sample_rgba(&rgba, 3, 2, Point::new(2, 1)),
+            Some(Color {
+                r: 10,
+                g: 20,
+                b: 30
+            })
+        );
+        assert_eq!(
+            sample_rgba(&rgba, 3, 2, Point::new(0, 0)),
+            Some(Color { r: 0, g: 0, b: 0 })
+        );
+    }
+
+    #[test]
+    fn sampling_outside_the_frame_is_none_not_a_panic() {
+        let rgba = vec![7u8; 2 * 2 * 4];
+        for outside in [
+            Point::new(-1, 0),
+            Point::new(0, -1),
+            Point::new(2, 0),
+            Point::new(0, 2),
+        ] {
+            assert_eq!(sample_rgba(&rgba, 2, 2, outside), None, "{outside:?}");
+        }
+    }
+
+    #[test]
+    fn sampling_ignores_alpha() {
+        // A crop's alpha carries its shape mask; a frame's is opaque. A
+        // color readout is about what was on screen either way.
+        let rgba = [1u8, 2, 3, 0];
+        assert_eq!(
+            sample_rgba(&rgba, 1, 1, Point::new(0, 0)),
+            Some(Color { r: 1, g: 2, b: 3 })
+        );
+    }
 
     fn canvas_buf() -> Vec<u32> {
         vec![0u32; (W * H) as usize]

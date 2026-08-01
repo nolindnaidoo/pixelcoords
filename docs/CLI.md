@@ -95,7 +95,7 @@ regardless.
 | `C` | Cycle overlapped shapes under the cursor |
 | `Alt`+drag | Drag out a duplicate |
 | Arrows | Nudge 1px (`Shift` 10px, `Alt` resizes) |
-| `M` (hold) | Magnifier loupe |
+| `M` (hold) | Magnifier loupe, with the center pixel's hex under it |
 | `N` | Name the session |
 | `R` | Release the monitor under the cursor: unfreeze that display and close its window, leaving the others frozen. Refused while it still holds marks |
 | `Space` (hold) | Move the control panel (position persists) |
