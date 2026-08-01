@@ -7,9 +7,10 @@ pixelcoords            # 1. freeze, mark, save a session
 pixelcoords assert     # 2. score points against it
 pixelcoords resolve    # 3. ask where to act, in your API's units
 pixelcoords emit       # 4. generate click code from it
-pixelcoords diff       # 5. check its regions still look right
-pixelcoords find       # 6. re-locate its regions after the UI drifts
-pixelcoords resume     # 7. reopen it and keep editing
+pixelcoords wait       # 5. block until its regions settle
+pixelcoords diff       # 6. check its regions still look right
+pixelcoords find       # 7. re-locate its regions after the UI drifts
+pixelcoords resume     # 8. reopen it and keep editing
 ```
 
 Exit codes are the API everywhere: **0** success/hit/found, **1**
@@ -238,6 +239,41 @@ coordinate worth handing to an executor.
 
 `emit` remains the human-facing sibling: ready-to-paste code. `resolve`
 is the machine answer underneath it.
+
+## `wait`
+
+Block until the watched regions match their saved crops again, or until
+one stops matching. Exit 0 condition met, **1 timed out**, 2 malformed.
+Stdout is a versioned JSON report.
+
+| Flag | Meaning |
+|------|---------|
+| `--session <PATH>` | The session |
+| `--label <TEXT>` | Watch only this label |
+| `--for match\|change` | `match` needs every region back; `change` fires on the first one that differs (default `match`) |
+| `--timeout <DURATION>` | How long to keep polling (default `30s`) |
+| `--interval <DURATION>` | How long between polls (default `500ms`) |
+| `--min-score <SCORE>` | Correlation at or above which a region counts as matching (default `0.9`) |
+
+Durations are one integer and one unit — `500ms`, `30s`, `2m`. A bare
+number is refused: `30` reads as seconds to one person and milliseconds
+to another.
+
+A timeout exits **1**, not 2. It is a negative answer to a well-formed
+question, and a script has to tell "the dialog never appeared" from "that
+session does not exist".
+
+**`--timeout` is a poll budget, not a wall-clock deadline.** It is turned
+into a number of polls before the loop starts — `30s` at `500ms` is 61,
+one immediate and sixty after — and capture time is not counted against
+it, so the wall clock runs longer by roughly what the captures cost. That
+is deliberate: with a real deadline, a loaded machine spends more of it
+capturing and so gives the UI *fewer* chances exactly when the UI is
+slowest. `polls` and `elapsed_ms` are both reported.
+
+`--min-score` is a correlation score in `0..=1`. It is deliberately not
+called `--tolerance`, which is `diff`'s percentage of differing pixels —
+different quantity, different direction, different default.
 
 ## `diff`
 

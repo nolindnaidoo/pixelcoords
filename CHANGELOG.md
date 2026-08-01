@@ -9,6 +9,58 @@ version number, for what changed under you.
 
 ## Unreleased
 
+### `wait`: block until the screen settles
+
+Automation that clicks needs to wait — for a dialog to appear, a spinner
+to leave, a state to settle — and every consumer of a session was writing
+that loop by hand: capture, compare, sleep, repeat. The primitives were
+already here. This is the verb.
+
+```
+pixelcoords wait --session shots --label dialog --for match
+```
+
+`match` needs every watched region back; `change` fires on the first that
+differs. The report prints on a timeout too, with each region's final
+score: knowing a region reached 0.87 against a 0.9 floor is the
+difference between "still settling" and "gone". A timeout exits **1**,
+not 2 — it is a negative answer, not a broken question.
+
+**`--timeout` is a poll budget, not a deadline.** It becomes a poll count
+before the loop starts, so the loop counts instead of consulting a clock.
+`30s` at `500ms` is 61 polls, and capture time is not charged against it,
+so the wall clock runs longer by what the captures cost. That is the
+trade: against a real deadline, a loaded machine spends more of the window
+capturing and gives the UI *fewer* chances exactly when the UI is slowest.
+`polls` and `elapsed_ms` are both reported, so the real cost is visible
+rather than inferred.
+
+Polling scores at the region's recorded location instead of re-scanning
+the frame to rediscover where it already is. That needed a new public
+primitive — `locate::TemplateStats`, with `prepare` and a bounds-checked
+`score_at`. Preparing it before the loop is also where a crop that could
+never match is refused: a flat, featureless crop correlates with
+everything, and finding that out on poll sixty means having burned the
+whole timeout first.
+
+One thing worth knowing before reaching for `--for change`: correlation is
+brightness-normalized, which is what lets `find` survive a theme tweak.
+The same property means a region that changes *uniformly* — a dimming
+backdrop, auto-brightness — still scores near 1.0 and will not fire it.
+That is inherent to the metric; `diff --tolerance 0` is the answer when
+"any pixel differs" is what you mean.
+
+Durations are one integer and one unit: `500ms`, `30s`, `2m`. A bare `30`
+is refused rather than assumed, because it reads as seconds to one person
+and milliseconds to another. `--min-score` is a correlation in `0..=1` and
+is deliberately not spelled `--tolerance`, which is `diff`'s percentage of
+pixels — different quantity, different direction, different default.
+
+`polls` and `elapsed_ms` are new optional fields on the shared report
+envelope, absent from every command that does not loop. They are
+provenance in the same sense `captured_utc` is: how the answer was
+obtained, never what it is.
+
 ### `diff`: did my regions still look right
 
 `assert` answers whether a point is inside a region and `find` answers

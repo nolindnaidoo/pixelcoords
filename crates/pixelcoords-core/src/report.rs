@@ -49,6 +49,18 @@ pub struct Report<T> {
     /// `--relocate`. Supplied by the caller; this crate has no clock.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub captured_utc: Option<String>,
+    /// How many times the screen was polled to reach this answer, and how
+    /// long that took. Present only for commands that loop — `wait` — and
+    /// provenance in the same sense `captured_utc` is: they describe how
+    /// the answer was obtained, never what it is.
+    ///
+    /// `elapsed_ms` is measured rather than derived. `wait` decides when
+    /// to stop by counting polls, not by watching a clock, so the two do
+    /// not imply each other: capture time is real and is not budgeted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub polls: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
     /// The aggregate the exit code mirrors: 0 when true, 1 when false.
     ///
     /// Each command computes this from its own rows, in its own module.
@@ -66,6 +78,8 @@ impl<T> Report<T> {
             schema: CLI_SCHEMA_VERSION,
             command,
             captured_utc: Some(captured_utc),
+            polls: None,
+            elapsed_ms: None,
             ok,
             results,
         }
@@ -77,9 +91,20 @@ impl<T> Report<T> {
             schema: CLI_SCHEMA_VERSION,
             command,
             captured_utc: None,
+            polls: None,
+            elapsed_ms: None,
             ok,
             results,
         }
+    }
+
+    /// Record how much polling produced this answer. Only `wait` loops,
+    /// so only `wait` calls this.
+    #[must_use]
+    pub fn polled(mut self, polls: u32, elapsed_ms: u64) -> Self {
+        self.polls = Some(polls);
+        self.elapsed_ms = Some(elapsed_ms);
+        self
     }
 }
 
@@ -147,6 +172,25 @@ mod tests {
         ] {
             assert_eq!(serde_json::to_value(command).unwrap(), name);
         }
+    }
+
+    #[test]
+    fn only_a_polling_command_reports_polls() {
+        // The two fields are provenance for the one command that loops.
+        // Every other document must not grow them, or a consumer would
+        // start expecting a poll count from `assert`.
+        let still = Report::offline(Command::Assert, true, vec![Row { hit: true }]);
+        let json = serde_json::to_value(&still).unwrap();
+        assert!(json.get("polls").is_none() && json.get("elapsed_ms").is_none());
+
+        let polled = Report::captured(Command::Wait, "t".into(), true, vec![Row { hit: true }])
+            .polled(61, 30_412);
+        let json = serde_json::to_value(&polled).unwrap();
+        assert_eq!(json["polls"], 61);
+        assert_eq!(
+            json["elapsed_ms"], 30_412,
+            "measured, not derived from the budget — capture time is real"
+        );
     }
 
     #[test]

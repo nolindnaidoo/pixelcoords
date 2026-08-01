@@ -11,6 +11,7 @@ Examples:
   pixelcoords assert --session <dir> --stdin < points.txt
   pixelcoords resolve --session <dir> --label submit --units auto
   pixelcoords emit --session <dir> --format pyautogui
+  pixelcoords wait --session <dir> --for match --timeout 30s
   pixelcoords diff --session <dir> --against baseline
   pixelcoords find --session <dir>
   pixelcoords doctor --json
@@ -188,6 +189,32 @@ pub enum Command {
         #[arg(long)]
         relocate: bool,
     },
+    /// Block until a session's regions match their saved crops again, or
+    /// until one stops matching: prints a JSON report; exits 0 condition
+    /// met, 1 timed out, 2 on error
+    Wait {
+        /// Path to a session.json, or the directory containing one
+        #[arg(long, value_name = "PATH")]
+        session: PathBuf,
+        /// Watch only selections with this label (case-insensitive)
+        #[arg(long, value_name = "TEXT")]
+        label: Option<String>,
+        /// `match` succeeds when every region matches again; `change`
+        /// succeeds when any region stops matching
+        #[arg(long = "for", value_enum, default_value_t = ConditionArg::Match)]
+        condition: ConditionArg,
+        /// How long to keep polling: an integer and a unit, like 30s,
+        /// 500ms, or 2m
+        #[arg(long, value_name = "DURATION", default_value = "30s")]
+        timeout: String,
+        /// How long to wait between polls
+        #[arg(long, value_name = "DURATION", default_value = "500ms")]
+        interval: String,
+        /// Correlation score at or above which a region counts as
+        /// matching. Not --tolerance: that is diff's percentage of pixels
+        #[arg(long, value_name = "SCORE", default_value_t = pixelcoords_core::locate::SCORE_FLOOR)]
+        min_score: f64,
+    },
     /// Compare a session's regions against the screen now, or against
     /// stored artifacts: prints a JSON report; exits 0 when every region
     /// is within tolerance, 1 otherwise, 2 on error
@@ -231,6 +258,24 @@ pub enum FormatArg {
     Cliclick,
     /// X11 shell: xdotool mousemove x y click 1 — physical pixels
     Xdotool,
+}
+
+/// What `wait` is waiting for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ConditionArg {
+    /// Every watched region matches its saved crop again
+    Match,
+    /// Any watched region has stopped matching
+    Change,
+}
+
+impl From<ConditionArg> for pixelcoords_core::wait::Condition {
+    fn from(arg: ConditionArg) -> Self {
+        match arg {
+            ConditionArg::Match => Self::Match,
+            ConditionArg::Change => Self::Change,
+        }
+    }
 }
 
 /// The scale a coordinate is expressed in. A separate question from

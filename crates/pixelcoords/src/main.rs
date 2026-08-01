@@ -113,6 +113,21 @@ fn run_subcommand(args: &cli::Cli, command: &cli::Command) -> Result<()> {
             let path = resolve_resume_session(Some(session), false, &root)?;
             rename_session(&path, name)
         }
+        cli::Command::Wait {
+            ref session,
+            ref label,
+            condition,
+            ref timeout,
+            ref interval,
+            min_score,
+        } => wait_command(
+            session,
+            label.as_deref(),
+            condition,
+            timeout,
+            interval,
+            min_score,
+        ),
         cli::Command::Diff {
             ref session,
             ref against,
@@ -258,6 +273,157 @@ fn monitor_from_record(record: &pixelcoords_core::session::MonitorRecord) -> cap
         size_native: Size::new(from(record.size_px.w), from(record.size_px.h)),
         scale: record.scale,
     }
+}
+
+/// The `wait` subcommand: print the report, exit 0 when the condition
+/// was met, 1 on timeout, 2 on a malformed question.
+///
+/// A timeout is **1**, not 2. It is a negative answer to a well-formed
+/// question, and a script has to be able to tell "the dialog never
+/// appeared" from "you pointed me at a session that does not exist".
+fn wait_command(
+    session: &std::path::Path,
+    label: Option<&str>,
+    condition: cli::ConditionArg,
+    timeout: &str,
+    interval: &str,
+    min_score: f64,
+) -> Result<()> {
+    let outcome = wait_setup(timeout, interval, min_score).and_then(|(budget, interval)| {
+        run_wait(
+            &XcapCapture,
+            session,
+            label,
+            condition.into(),
+            budget,
+            interval,
+            min_score,
+        )
+    });
+    let report = match outcome {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("pixelcoords wait: {e:#}");
+            std::process::exit(2)
+        }
+    };
+    let ok = report.ok;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if ok {
+        return Ok(());
+    }
+    std::process::exit(1)
+}
+
+/// Validate the timing flags before anything is captured, turning the
+/// timeout into a poll count.
+fn wait_setup(timeout: &str, interval: &str, min_score: f64) -> Result<(u32, std::time::Duration)> {
+    use pixelcoords_core::duration::parse_duration;
+
+    anyhow::ensure!(
+        (0.0..=1.0).contains(&min_score),
+        "--min-score is a correlation score in 0..=1: {min_score} is outside it. \
+         (diff's --tolerance is the percentage; these are different quantities.)"
+    );
+    let timeout = parse_duration(timeout).context("--timeout")?;
+    let interval = parse_duration(interval).context("--interval")?;
+    let budget = pixelcoords_core::wait::poll_budget(timeout, interval)?;
+    Ok((budget, interval))
+}
+
+/// Poll the watched regions until the condition holds or the budget runs
+/// out.
+///
+/// The loop counts polls rather than reading a clock, so nothing about
+/// when it ends depends on how long a capture took. `elapsed_ms` is still
+/// measured and reported — provenance, not a decision.
+fn run_wait<P: CaptureProvider>(
+    provider: &P,
+    path: &std::path::Path,
+    label: Option<&str>,
+    condition: pixelcoords_core::wait::Condition,
+    budget: u32,
+    interval: std::time::Duration,
+    min_score: f64,
+) -> Result<pixelcoords_core::report::Report<pixelcoords_core::wait::RegionWatch>> {
+    use pixelcoords_core::locate::{GrayImage, TemplateStats};
+    use pixelcoords_core::report::{Command, Report};
+
+    let session = load_session(path)?;
+    let regions = regions::load(&session, &session_dir(path), label)?;
+
+    // Prepared before the loop, so a crop that can never match — no
+    // visible pixels, or one flat colour — is refused now with the reason
+    // rather than silently never matching for thirty seconds.
+    let probes: Vec<(
+        usize,
+        usize,
+        String,
+        TemplateStats,
+        pixelcoords_core::geometry::Point,
+    )> = regions
+        .iter()
+        .map(|region| {
+            let stats = TemplateStats::prepare(&region.template()).with_context(|| {
+                format!("selection {} ({:?})", region.index, region.record.label)
+            })?;
+            Ok((
+                region.index,
+                region.monitor,
+                region.record.label.clone(),
+                stats,
+                region.origin,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let started = std::time::Instant::now();
+    let mut polls = 0u32;
+    let mut scores: Vec<f64> = Vec::new();
+    for poll in 0..budget {
+        if poll > 0 {
+            std::thread::sleep(interval);
+        }
+        let frames = regions::capture_frames(provider, &session, &regions)?;
+        let gray: std::collections::HashMap<usize, GrayImage> = frames
+            .into_iter()
+            .map(|(index, img)| {
+                let (w, h) = (img.width() as usize, img.height() as usize);
+                (index, GrayImage::from_rgba(w, h, img.as_raw()))
+            })
+            .collect();
+
+        scores = probes
+            .iter()
+            .map(|(_, monitor, _, stats, at)| stats.score_at(&gray[monitor], *at))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        polls = poll + 1;
+        if pixelcoords_core::wait::satisfied(condition, &scores, min_score) {
+            break;
+        }
+    }
+
+    let ok = pixelcoords_core::wait::satisfied(condition, &scores, min_score);
+    let results = probes
+        .iter()
+        .zip(&scores)
+        .map(
+            |((index, monitor, label, _, _), score)| pixelcoords_core::wait::RegionWatch {
+                index: *index,
+                label: label.clone(),
+                monitor: *monitor,
+                score: *score,
+                matching: *score >= min_score,
+            },
+        )
+        .collect();
+    let captured = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .context("formatting timestamp")?;
+    let mut report = Report::captured(Command::Wait, captured, ok, results);
+    report.polls = Some(polls);
+    report.elapsed_ms = Some(started.elapsed().as_millis() as u64);
+    Ok(report)
 }
 
 /// The `diff` subcommand: print the report, exit 0 when every region is
@@ -2340,6 +2506,162 @@ mod tests {
         fn windows(&self) -> Result<Vec<crate::capture::WindowInfo>> {
             Ok(vec![])
         }
+    }
+
+    /// A screen scripted to change: `capture` hands out
+    /// `frames[min(call, len - 1)]`, so a test says "the region returns on
+    /// poll 3" and nothing else has to move.
+    ///
+    /// Deterministic by *call count* rather than by a clock, which is what
+    /// lets `wait` be tested without one. `capture(&self, ..)` takes a
+    /// shared reference, so the counter needs interior mutability — a
+    /// `Cell` is enough, no dependency and no unsafe.
+    struct ScriptedScreen {
+        /// Each frame is (region matches its crop, or does not).
+        script: Vec<bool>,
+        calls: std::cell::Cell<usize>,
+    }
+
+    impl ScriptedScreen {
+        fn new(script: &[bool]) -> Self {
+            Self {
+                script: script.to_vec(),
+                calls: std::cell::Cell::new(0),
+            }
+        }
+    }
+
+    impl CaptureProvider for ScriptedScreen {
+        fn monitors(&self) -> Result<Vec<MonitorInfo>> {
+            Ok(vec![MonitorInfo {
+                index: 0,
+                name: "Fake".into(),
+                primary: true,
+                origin: Point::new(0, 0),
+                size_native: Size::new(160, 120),
+                scale: 1.0,
+            }])
+        }
+
+        fn capture(&self, _monitor: &MonitorInfo) -> Result<RgbaImage> {
+            let call = self.calls.get();
+            self.calls.set(call + 1);
+            // The last frame repeats, so a script describes the change and
+            // not how long the test happens to poll afterwards.
+            let matches = self.script[call.min(self.script.len() - 1)];
+            let patch = find_patch();
+            Ok(RgbaImage::from_fn(160, 120, |x, y| {
+                let (dx, dy) = (x as i32 - 30, y as i32 - 20);
+                if matches && (0..24).contains(&dx) && (0..16).contains(&dy) {
+                    let v = patch[(dy * 24 + dx) as usize];
+                    return image::Rgba([v, v, v, 255]);
+                }
+                image::Rgba([128, 128, 128, 255])
+            }))
+        }
+
+        fn windows(&self) -> Result<Vec<crate::capture::WindowInfo>> {
+            Ok(vec![])
+        }
+    }
+
+    /// Drive the poll loop with no sleeping: tests own the schedule by
+    /// scripting the frames, so the interval only has to be nonzero for
+    /// `poll_budget` and can be zero here, where nothing consults it.
+    fn watch(
+        screen: &ScriptedScreen,
+        dir: &std::path::Path,
+        condition: pixelcoords_core::wait::Condition,
+        budget: u32,
+    ) -> Result<pixelcoords_core::report::Report<pixelcoords_core::wait::RegionWatch>> {
+        super::run_wait(
+            screen,
+            dir,
+            None,
+            condition,
+            budget,
+            std::time::Duration::ZERO,
+            pixelcoords_core::locate::SCORE_FLOOR,
+        )
+    }
+
+    #[test]
+    fn wait_for_match_returns_on_the_poll_the_pixels_return() {
+        use pixelcoords_core::wait::Condition;
+        let dir = write_find_fixture("pixelcoords-test-wait-match", true);
+        // Absent, absent, then back.
+        let screen = ScriptedScreen::new(&[false, false, true]);
+        let report = watch(&screen, &dir, Condition::Match, 10).unwrap();
+        assert!(report.ok);
+        assert_eq!(report.polls, Some(3), "stops the moment it is satisfied");
+        assert!(report.results[0].matching);
+        assert!(
+            report.elapsed_ms.is_some(),
+            "measured even at zero interval"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn wait_for_change_returns_on_the_poll_the_pixels_differ() {
+        use pixelcoords_core::wait::Condition;
+        let dir = write_find_fixture("pixelcoords-test-wait-change", true);
+        let screen = ScriptedScreen::new(&[true, true, true, false]);
+        let report = watch(&screen, &dir, Condition::Change, 10).unwrap();
+        assert!(report.ok);
+        assert_eq!(report.polls, Some(4));
+        assert!(!report.results[0].matching, "the region stopped matching");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_condition_that_never_holds_spends_the_budget_and_still_reports() {
+        use pixelcoords_core::wait::Condition;
+        let dir = write_find_fixture("pixelcoords-test-wait-timeout", true);
+        let screen = ScriptedScreen::new(&[false]);
+        let report = watch(&screen, &dir, Condition::Match, 4).unwrap();
+        assert!(!report.ok, "a timeout is a negative answer");
+        assert_eq!(report.polls, Some(4), "the whole budget was spent");
+        assert!(
+            report.results[0].score < pixelcoords_core::locate::SCORE_FLOOR,
+            "the report still says how close it got — that is the point of \
+             reporting on a timeout at all"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_already_satisfied_condition_polls_once() {
+        use pixelcoords_core::wait::Condition;
+        let dir = write_find_fixture("pixelcoords-test-wait-immediate", true);
+        let screen = ScriptedScreen::new(&[true]);
+        let report = watch(&screen, &dir, Condition::Match, 61).unwrap();
+        assert!(report.ok);
+        assert_eq!(
+            report.polls,
+            Some(1),
+            "the first poll is immediate; waiting to check would add latency \
+             to the common case"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_featureless_crop_is_refused_before_any_polling() {
+        use pixelcoords_core::wait::Condition;
+        let dir = write_find_fixture("pixelcoords-test-wait-flat", true);
+        // A flat crop correlates with everything, so it could never
+        // honestly match — and discovering that on poll sixty would have
+        // burned the whole timeout first.
+        RgbaImage::from_pixel(24, 16, image::Rgba([7, 7, 7, 255]))
+            .save(dir.join("crop-0-chip.png"))
+            .unwrap();
+        let screen = ScriptedScreen::new(&[true]);
+        let err = watch(&screen, &dir, Condition::Match, 10).unwrap_err();
+        let text = format!("{err:#}");
+        assert!(text.contains("flat color"), "got: {text}");
+        assert_eq!(screen.calls.get(), 0, "refused before the first capture");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A session dir whose one selection sat at (30, 20) with the patch as
