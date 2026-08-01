@@ -927,6 +927,9 @@ fn emit_snippet(
         cli::FormatArg::Pyautogui => pixelcoords_core::emit::EmitFormat::Pyautogui,
         cli::FormatArg::Cliclick => pixelcoords_core::emit::EmitFormat::Cliclick,
         cli::FormatArg::Xdotool => pixelcoords_core::emit::EmitFormat::Xdotool,
+        cli::FormatArg::Powershell => pixelcoords_core::emit::EmitFormat::Powershell,
+        cli::FormatArg::Applescript => pixelcoords_core::emit::EmitFormat::Applescript,
+        cli::FormatArg::Ydotool => pixelcoords_core::emit::EmitFormat::Ydotool,
     };
     Ok(pixelcoords_core::emit::emit(
         &session,

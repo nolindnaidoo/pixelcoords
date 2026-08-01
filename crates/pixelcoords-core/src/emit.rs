@@ -32,6 +32,13 @@ pub enum EmitFormat {
     Pyautogui,
     Cliclick,
     Xdotool,
+    /// Windows with nothing installed: `SetCursorPos` + `mouse_event`
+    /// through a P/Invoke preamble.
+    Powershell,
+    /// macOS with nothing installed: System Events.
+    Applescript,
+    /// The Wayland answer, where xdotool cannot reach.
+    Ydotool,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -68,6 +75,9 @@ pub fn emit(
         EmitFormat::Pyautogui => pyautogui(session, platform, label),
         EmitFormat::Cliclick => cliclick(session, label),
         EmitFormat::Xdotool => xdotool(session, label),
+        EmitFormat::Powershell => powershell(session, label),
+        EmitFormat::Applescript => applescript(session, label),
+        EmitFormat::Ydotool => ydotool(session, label),
     }
 }
 
@@ -128,6 +138,88 @@ fn xdotool(session: &SessionFile, label: Option<&str>) -> Result<String, EmitErr
         let _ = writeln!(
             out,
             "xdotool mousemove {} {} click 1  # {}",
+            t.point.x, t.point.y, t.comment
+        );
+    }
+    Ok(out)
+}
+
+/// Windows without Python. The Win32 cursor APIs speak physical pixels on
+/// a per-monitor-DPI-aware process, which is what the session records on
+/// Windows, so no conversion happens here.
+///
+/// The P/Invoke preamble is emitted once rather than per click: pasting
+/// `Add-Type` for the same type twice in one session is an error, not a
+/// no-op, so a per-click preamble would break on the second selection.
+fn powershell(session: &SessionFile, label: Option<&str>) -> Result<String, EmitError> {
+    let targets = click_targets(session, Resolved::Physical, label)?;
+    let mut out = header("#", session, "physical pixels (Windows)");
+    out.push_str(
+        "\nAdd-Type @\"\n\
+         using System;\n\
+         using System.Runtime.InteropServices;\n\
+         public class PixelCoords {\n\
+         \x20 [DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int x, int y);\n\
+         \x20 [DllImport(\"user32.dll\")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int i);\n\
+         }\n\
+         \"@\n",
+    );
+    for t in targets {
+        // 0x0002 is MOUSEEVENTF_LEFTDOWN, 0x0004 MOUSEEVENTF_LEFTUP.
+        let _ = write!(
+            out,
+            "\n# {}\n\
+             [PixelCoords]::SetCursorPos({}, {})\n\
+             [PixelCoords]::mouse_event(0x0002, 0, 0, 0, 0)\n\
+             [PixelCoords]::mouse_event(0x0004, 0, 0, 0, 0)\n",
+            t.comment, t.point.x, t.point.y
+        );
+    }
+    Ok(out)
+}
+
+/// macOS without Homebrew. System Events speaks logical points, like
+/// cliclick.
+///
+/// One `tell` block wraps every click rather than one per selection —
+/// the snippet is meant to be pasted whole, and re-entering the same
+/// application context per click is noise a reader has to skip.
+fn applescript(session: &SessionFile, label: Option<&str>) -> Result<String, EmitError> {
+    let targets = click_targets(session, Resolved::Logical, label)?;
+    let mut out = header("--", session, "logical points (macOS)");
+    out.push_str(
+        "-- System Events clicking needs Accessibility permission:\n\
+         -- System Settings > Privacy & Security > Accessibility\n\
+         \ntell application \"System Events\"\n",
+    );
+    for t in targets {
+        let _ = write!(
+            out,
+            "\t-- {}\n\tclick at {{{}, {}}}\n",
+            t.comment, t.point.x, t.point.y
+        );
+    }
+    out.push_str("end tell\n");
+    Ok(out)
+}
+
+/// The Wayland answer, completing the `--pick` story: xdotool speaks X11
+/// only, and a Wayland compositor will not answer it.
+///
+/// Physical pixels, like xdotool — ydotool writes to an uinput device
+/// below the compositor, so it addresses the raw device grid.
+fn ydotool(session: &SessionFile, label: Option<&str>) -> Result<String, EmitError> {
+    let targets = click_targets(session, Resolved::Physical, label)?;
+    let mut out = header("#", session, "physical pixels (Wayland)");
+    out.push_str(
+        "# needs the ydotoold daemon running and permission on its socket —\n\
+         # this is setup on your side, not something the snippet can do\n",
+    );
+    for t in targets {
+        // 0xC0 is ydotool's left-button press-and-release.
+        let _ = writeln!(
+            out,
+            "ydotool mousemove --absolute -x {} -y {} && ydotool click 0xC0  # {}",
             t.point.x, t.point.y, t.comment
         );
     }
@@ -251,6 +343,143 @@ mod tests {
             &crops,
             None,
         )
+    }
+
+    /// One selection per monitor on a mixed-DPI desktop: monitor 0 at
+    /// scale 1 and monitor 1 at scale 2, offset to global x=1920. The
+    /// click points are physical (850, 440) and (2040, 230); in logical
+    /// units the second halves to (1020, 115) and the first does not
+    /// move. Every format below is checked against the same two.
+    fn mixed_dpi() -> SessionFile {
+        session(
+            vec![monitor(0, 0, 0, 1.0), monitor(1, 1920, 0, 2.0)],
+            &[
+                labeled(Shape::Rect(Rect::new(800, 400, 100, 80)), 0, "left"),
+                labeled(Shape::Rect(Rect::new(100, 200, 40, 60)), 1, "right"),
+            ],
+        )
+    }
+
+    #[test]
+    fn powershell_emits_physical_pixels_and_one_preamble() {
+        let out = emit(
+            &mixed_dpi(),
+            EmitFormat::Powershell,
+            Platform::Windows,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "# generated by pixelcoords from a session captured 2026-07-27T11:35:42Z\n\
+             # coordinates: physical pixels (Windows) — run on the machine and \
+             monitor layout that was captured\n\
+             \n\
+             Add-Type @\"\n\
+             using System;\n\
+             using System.Runtime.InteropServices;\n\
+             public class PixelCoords {\n\
+             \x20 [DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int x, int y);\n\
+             \x20 [DllImport(\"user32.dll\")] public static extern void mouse_event(uint f, uint x, uint y, uint d, int i);\n\
+             }\n\
+             \"@\n\
+             \n\
+             # left — rect on monitor 0\n\
+             [PixelCoords]::SetCursorPos(850, 440)\n\
+             [PixelCoords]::mouse_event(0x0002, 0, 0, 0, 0)\n\
+             [PixelCoords]::mouse_event(0x0004, 0, 0, 0, 0)\n\
+             \n\
+             # right — rect on monitor 1\n\
+             [PixelCoords]::SetCursorPos(2040, 230)\n\
+             [PixelCoords]::mouse_event(0x0002, 0, 0, 0, 0)\n\
+             [PixelCoords]::mouse_event(0x0004, 0, 0, 0, 0)\n"
+        );
+        assert_eq!(
+            out.matches("Add-Type").count(),
+            1,
+            "pasting Add-Type twice for one type is an error, not a no-op"
+        );
+    }
+
+    #[test]
+    fn applescript_emits_logical_points_per_monitor_scale() {
+        let out = emit(&mixed_dpi(), EmitFormat::Applescript, Platform::MacOs, None).unwrap();
+        assert_eq!(
+            out,
+            "-- generated by pixelcoords from a session captured 2026-07-27T11:35:42Z\n\
+             -- coordinates: logical points (macOS) — run on the machine and \
+             monitor layout that was captured\n\
+             -- System Events clicking needs Accessibility permission:\n\
+             -- System Settings > Privacy & Security > Accessibility\n\
+             \n\
+             tell application \"System Events\"\n\
+             \t-- left — rect on monitor 0\n\
+             \tclick at {850, 440}\n\
+             \t-- right — rect on monitor 1\n\
+             \tclick at {1020, 115}\n\
+             end tell\n"
+        );
+    }
+
+    #[test]
+    fn ydotool_emits_physical_pixels_with_the_daemon_caveat() {
+        let out = emit(&mixed_dpi(), EmitFormat::Ydotool, Platform::Linux, None).unwrap();
+        assert_eq!(
+            out,
+            "# generated by pixelcoords from a session captured 2026-07-27T11:35:42Z\n\
+             # coordinates: physical pixels (Wayland) — run on the machine and \
+             monitor layout that was captured\n\
+             # needs the ydotoold daemon running and permission on its socket —\n\
+             # this is setup on your side, not something the snippet can do\n\
+             ydotool mousemove --absolute -x 850 -y 440 && ydotool click 0xC0  \
+             # left — rect on monitor 0\n\
+             ydotool mousemove --absolute -x 2040 -y 230 && ydotool click 0xC0  \
+             # right — rect on monitor 1\n"
+        );
+    }
+
+    #[test]
+    fn each_format_applies_its_own_convention_to_the_same_session() {
+        // The point of the table: one session, two monitors at different
+        // scales, and each target gets the units *it* speaks — with the
+        // second selection converted through monitor 1's scale, never a
+        // desktop-wide one.
+        let file = mixed_dpi();
+        let physical = [
+            EmitFormat::Xdotool,
+            EmitFormat::Powershell,
+            EmitFormat::Ydotool,
+        ];
+        for format in physical {
+            let out = emit(&file, format, Platform::Linux, None).unwrap();
+            assert!(out.contains("2040"), "{format:?} should be physical");
+            assert!(!out.contains("1020"), "{format:?} must not halve");
+        }
+        for format in [EmitFormat::Cliclick, EmitFormat::Applescript] {
+            let out = emit(&file, format, Platform::MacOs, None).unwrap();
+            assert!(out.contains("1020"), "{format:?} should be logical");
+            assert!(
+                out.contains("850"),
+                "{format:?}: the scale-1 monitor must not move"
+            );
+        }
+    }
+
+    #[test]
+    fn a_label_filter_reaches_the_new_formats_too() {
+        let file = mixed_dpi();
+        for format in [
+            EmitFormat::Powershell,
+            EmitFormat::Applescript,
+            EmitFormat::Ydotool,
+        ] {
+            let out = emit(&file, format, Platform::MacOs, Some("right")).unwrap();
+            assert!(out.contains("right"), "{format:?}");
+            assert!(!out.contains("# left"), "{format:?} emitted the wrong one");
+
+            let err = emit(&file, format, Platform::MacOs, Some("nope")).unwrap_err();
+            assert!(matches!(err, EmitError::UnknownLabel { .. }), "{format:?}");
+        }
     }
 
     #[test]

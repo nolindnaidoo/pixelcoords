@@ -258,6 +258,15 @@ pub enum FormatArg {
     Cliclick,
     /// X11 shell: xdotool mousemove x y click 1 — physical pixels
     Xdotool,
+    /// Windows, nothing installed: `SetCursorPos` via `Add-Type`
+    /// P/Invoke — physical pixels
+    Powershell,
+    /// macOS, nothing installed: System Events `click at` — logical
+    /// points. Needs Accessibility permission
+    Applescript,
+    /// Wayland shell: `ydotool mousemove --absolute` — physical pixels.
+    /// Needs the `ydotoold` daemon
+    Ydotool,
 }
 
 /// What `wait` is waiting for.
