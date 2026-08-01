@@ -23,11 +23,15 @@ repository.workspace = true
 # carrying that keyword: automation 1402, testing 2108, ui 1852,
 # agent 3412, against hidpi 3 and computer-use 11.
 keywords = ["screenshot", "automation", "testing", "ui", "agent"]
+# No multimedia::images here. That category is "crates that process or
+# build images", and the binary writing PNG crops is a side effect of
+# what it does, not what it is: a terminal tool you run to get
+# coordinates and verify them. The library, which really does the image
+# work, keeps it.
 categories = [
     "command-line-utilities",
     "development-tools::testing",
     "development-tools",
-    "multimedia::images",
 ]
 
 [dependencies]
