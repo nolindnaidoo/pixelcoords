@@ -9,6 +9,28 @@ version number, for what changed under you.
 
 ## Unreleased
 
+### A ruler on the screen
+
+`W` now cycles to a sixth tool that draws a measurement instead of a
+region. Drag out a ruler and it captions itself live —
+Δ30,40 · 50px · 53° — with `Shift` snapping to the eight 45°
+directions. Grab an endpoint to re-aim it, its middle to move it whole.
+`A` labels it, `D` deletes it, and `Z` undoes it off the same stack the
+shapes use, so a mixed session undoes in the order you actually worked.
+
+Measurements are not selections and do not pretend to be. A ruler marks
+a distance, not a region, so it produces no crop and no cutout, and it
+serializes into a **top-level `measures` array** beside `selections`
+rather than inside it. Each record carries both endpoints in `px` and
+`global_px`, plus `length_px`, `dx`, `dy`, and `angle_deg` — all
+derivable from the endpoints, stored so a consumer reads the number off
+the ruler instead of reimplementing the geometry, and so the overlay and
+the file can never disagree about which way the angle turns. It is
+clockwise from +X, because screen Y grows downward.
+
+The array is omitted when empty. The schema stays 1: a session without
+measures is byte-identical to one written before the tool existed.
+
 ### The pixel under the cursor, read out and recorded
 
 Every tool in this one's comparison set shows the color under the

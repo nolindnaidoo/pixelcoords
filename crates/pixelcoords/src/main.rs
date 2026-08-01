@@ -255,7 +255,8 @@ fn run_resume(args: &cli::Cli, path: &std::path::Path, out: Option<PathBuf>) -> 
         capture: session.capture,
         name: session.name.clone(),
     });
-    app.restore_session(selections, previous, in_place);
+    let measures = pixelcoords_core::session::restore_measures(&session);
+    app.restore_session(selections, measures, previous, in_place);
     app.restore_panel(state::load_panel());
     app.run()
 }
@@ -3006,7 +3007,7 @@ mod tests {
         assert_eq!(crop_name, "crop-0-spun.png");
         std::fs::write(dir.join(&crop_name), b"sentinel").unwrap();
         std::fs::write(dir.join("cutout-primary-0.png"), b"sentinel").unwrap();
-        let seeded = SelectionSet::seed(restored);
+        let seeded = SelectionSet::seed(restored, Vec::new());
         crate::save::write_session(
             &dir,
             &[(&info, &frame_img)],

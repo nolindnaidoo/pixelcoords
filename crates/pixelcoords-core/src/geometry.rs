@@ -46,6 +46,19 @@ impl Rect {
     pub const fn contains(&self, p: Point) -> bool {
         p.x >= self.x && p.y >= self.y && p.x < self.x + self.w && p.y < self.y + self.h
     }
+
+    /// The nearest point inside this rect.
+    ///
+    /// The upper bounds are inclusive-exclusive to match `contains`, so a
+    /// clamped point always satisfies it — a zero-sized rect is the one
+    /// exception, and it clamps to the origin corner.
+    #[must_use]
+    pub fn clamp_point(&self, p: Point) -> Point {
+        Point::new(
+            p.x.clamp(self.x, self.x + (self.w - 1).max(0)),
+            p.y.clamp(self.y, self.y + (self.h - 1).max(0)),
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +74,10 @@ pub enum ToolKind {
     Polygon,
     /// The freehand drawing tool; its records store as `poly`.
     Freehand,
+    /// The two-point ruler. Never appears in a `SelectionRecord` — it is
+    /// only ever the *active tool*, and what it produces lands in the
+    /// session's `measures` array instead.
+    Measure,
     /// What polygon and freehand records are tagged as: one stored kind,
     /// one consumer code path, however the vertices were authored.
     Poly,
@@ -74,7 +91,8 @@ impl ToolKind {
             Self::Circle | Self::Ellipse => Self::Triangle,
             Self::Triangle => Self::Polygon,
             Self::Polygon => Self::Freehand,
-            Self::Freehand | Self::Poly => Self::Rect,
+            Self::Freehand => Self::Measure,
+            Self::Measure | Self::Poly => Self::Rect,
         }
     }
 }
@@ -186,8 +204,9 @@ impl Shape {
             // The polygon and freehand tools build their previews in the
             // app (they need side counts and accumulated paths this
             // stateless helper cannot know); `Poly` is a record tag, not
-            // a drawing tool.
-            ToolKind::Polygon | ToolKind::Freehand | ToolKind::Poly => None,
+            // a drawing tool. `Measure` draws a `Line`, which is not a
+            // `Shape` at all — see `SelectionSet::add_measure`.
+            ToolKind::Polygon | ToolKind::Freehand | ToolKind::Poly | ToolKind::Measure => None,
         }
     }
 
@@ -1109,9 +1128,278 @@ fn resize_box(
     Rect::new(x0, y0, w, h)
 }
 
+/// A two-point measurement: a ruler laid on the frozen image.
+///
+/// Not a [`Shape`]. A measure has no interior, no crop, no cutout
+/// contribution and no click point, so putting it through the selection
+/// path would make `assert`, `emit`, `find`, and the crop writer each
+/// grow a special case for a thing none of them can answer about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Line {
+    pub a: Point,
+    pub b: Point,
+}
+
+impl Line {
+    #[must_use]
+    pub const fn new(a: Point, b: Point) -> Self {
+        Self { a, b }
+    }
+
+    /// Signed horizontal and vertical extent, `b - a`.
+    #[must_use]
+    pub const fn delta(self) -> (i32, i32) {
+        (self.b.x - self.a.x, self.b.y - self.a.y)
+    }
+
+    /// Euclidean length in pixels.
+    #[must_use]
+    pub fn length(self) -> f64 {
+        let (dx, dy) = self.delta();
+        f64::from(dx).hypot(f64::from(dy))
+    }
+
+    /// Direction in degrees within `[0, 360)`, `0` pointing right along
+    /// +X and increasing **clockwise**.
+    ///
+    /// Clockwise because screen Y grows downward: a ruler dragged
+    /// visually down-and-right has to read as a positive angle, which the
+    /// mathematical convention would report as negative.
+    ///
+    /// A zero-length measure has no direction; it reports `0.0` rather
+    /// than the NaN `atan2(0, 0)` would be entitled to.
+    #[must_use]
+    pub fn angle_deg(self) -> f64 {
+        let (dx, dy) = self.delta();
+        if dx == 0 && dy == 0 {
+            return 0.0;
+        }
+        let deg = f64::from(dy).atan2(f64::from(dx)).to_degrees();
+        if deg < 0.0 { deg + 360.0 } else { deg }
+    }
+
+    /// The smallest rect containing both endpoints — what the caption
+    /// placement needs, since a line has no `Shape::bbox`.
+    #[must_use]
+    pub fn bbox(self) -> Rect {
+        let x = self.a.x.min(self.b.x);
+        let y = self.a.y.min(self.b.y);
+        Rect::new(
+            x,
+            y,
+            (self.a.x - self.b.x).abs(),
+            (self.a.y - self.b.y).abs(),
+        )
+    }
+
+    #[must_use]
+    pub const fn translated(self, dx: i32, dy: i32) -> Self {
+        Self::new(
+            Point::new(self.a.x + dx, self.a.y + dy),
+            Point::new(self.b.x + dx, self.b.y + dy),
+        )
+    }
+
+    /// The endpoint `p` grabs, if either is within `tolerance`.
+    ///
+    /// `a` wins a tie: the two coincide only on a zero-length measure,
+    /// where the choice cannot matter, and preferring one keeps the pick
+    /// deterministic.
+    #[must_use]
+    pub fn endpoint_grab(self, p: Point, tolerance: i32) -> Option<bool> {
+        let near = |q: Point| {
+            let (dx, dy) = (i64::from(p.x - q.x), i64::from(p.y - q.y));
+            dx * dx + dy * dy <= i64::from(tolerance) * i64::from(tolerance)
+        };
+        if near(self.a) {
+            return Some(true);
+        }
+        near(self.b).then_some(false)
+    }
+
+    /// Whether `p` is within `tolerance` of the segment — the whole-line
+    /// grab, used after the endpoints have had their chance.
+    #[must_use]
+    pub fn hit_test(self, p: Point, tolerance: i32) -> bool {
+        self.distance_to(p) <= f64::from(tolerance)
+    }
+
+    /// Shortest distance from `p` to the segment, clamped at the ends so
+    /// a point beyond `b` measures to `b` rather than to the infinite
+    /// line through it.
+    #[must_use]
+    pub fn distance_to(self, p: Point) -> f64 {
+        let (dx, dy) = self.delta();
+        let (dx, dy) = (f64::from(dx), f64::from(dy));
+        let len_sq = dx.mul_add(dx, dy * dy);
+        let (px, py) = (f64::from(p.x - self.a.x), f64::from(p.y - self.a.y));
+        if len_sq <= f64::EPSILON {
+            return px.hypot(py);
+        }
+        let t = px.mul_add(dx, py * dy) / len_sq;
+        let t = t.clamp(0.0, 1.0);
+        (px - t * dx).hypot(py - t * dy)
+    }
+
+    /// `b` snapped to the nearest horizontal, vertical, or 45° direction
+    /// from `a` — what Shift does while dragging, matching the constraint
+    /// the other tools apply.
+    ///
+    /// The length along the chosen direction is preserved as the
+    /// projection of the free endpoint onto it, so the ruler tracks the
+    /// pointer instead of jumping to a fixed radius.
+    #[must_use]
+    pub fn constrained(self) -> Self {
+        // Eight directions, 45° apart, as unit vectors.
+        const AXES: [(f64, f64); 8] = [
+            (1.0, 0.0),
+            (-1.0, 0.0),
+            (0.0, 1.0),
+            (0.0, -1.0),
+            (
+                std::f64::consts::FRAC_1_SQRT_2,
+                std::f64::consts::FRAC_1_SQRT_2,
+            ),
+            (
+                std::f64::consts::FRAC_1_SQRT_2,
+                -std::f64::consts::FRAC_1_SQRT_2,
+            ),
+            (
+                -std::f64::consts::FRAC_1_SQRT_2,
+                std::f64::consts::FRAC_1_SQRT_2,
+            ),
+            (
+                -std::f64::consts::FRAC_1_SQRT_2,
+                -std::f64::consts::FRAC_1_SQRT_2,
+            ),
+        ];
+        let (dx, dy) = self.delta();
+        if dx == 0 && dy == 0 {
+            return self;
+        }
+        let (fx, fy) = (f64::from(dx), f64::from(dy));
+        let mut best = (f64::NEG_INFINITY, 0.0, 0.0);
+        for (ax, ay) in AXES {
+            let projection = fx.mul_add(ax, fy * ay);
+            if projection > best.0 {
+                best = (projection, ax, ay);
+            }
+        }
+        let (projection, ax, ay) = best;
+        let projection = projection.max(0.0);
+        Self::new(
+            self.a,
+            Point::new(
+                self.a.x + (projection * ax).round() as i32,
+                self.a.y + (projection * ay).round() as i32,
+            ),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn length_and_delta_are_the_plain_arithmetic() {
+        let line = Line::new(Point::new(10, 20), Point::new(40, 60));
+        assert_eq!(line.delta(), (30, 40));
+        assert!((line.length() - 50.0).abs() < 1e-9, "3-4-5 triangle");
+    }
+
+    #[test]
+    fn length_is_invariant_under_translation() {
+        let line = Line::new(Point::new(-5, 7), Point::new(11, -3));
+        let moved = line.translated(1000, -400);
+        assert!((line.length() - moved.length()).abs() < 1e-9);
+        assert_eq!(line.delta(), moved.delta());
+    }
+
+    #[test]
+    fn angle_is_clockwise_from_positive_x() {
+        // Screen Y grows downward, so "down" must read as +90, not -90.
+        let at = |dx, dy| Line::new(Point::new(0, 0), Point::new(dx, dy)).angle_deg();
+        assert!((at(10, 0) - 0.0).abs() < 1e-9, "right");
+        assert!((at(0, 10) - 90.0).abs() < 1e-9, "down");
+        assert!((at(-10, 0) - 180.0).abs() < 1e-9, "left");
+        assert!((at(0, -10) - 270.0).abs() < 1e-9, "up");
+        assert!((at(10, 10) - 45.0).abs() < 1e-9, "down-right");
+    }
+
+    #[test]
+    fn angle_is_antisymmetric_under_endpoint_swap() {
+        // The invariant the issue names: angle(A,B) == (angle(B,A) + 180) % 360.
+        for (ax, ay, bx, by) in [
+            (0, 0, 10, 0),
+            (3, 7, -11, 2),
+            (-5, -5, 5, 5),
+            (100, -20, 100, 40),
+        ] {
+            let ab = Line::new(Point::new(ax, ay), Point::new(bx, by)).angle_deg();
+            let ba = Line::new(Point::new(bx, by), Point::new(ax, ay)).angle_deg();
+            let expected = (ba + 180.0) % 360.0;
+            assert!((ab - expected).abs() < 1e-9, "{ab} vs {expected}");
+        }
+    }
+
+    #[test]
+    fn a_zero_length_measure_has_no_direction_rather_than_nan() {
+        let dot = Line::new(Point::new(4, 4), Point::new(4, 4));
+        assert!((dot.length() - 0.0).abs() < f64::EPSILON);
+        assert!(dot.angle_deg().is_finite(), "atan2(0,0) must not escape");
+        assert!((dot.angle_deg() - 0.0).abs() < f64::EPSILON);
+        // And it is still grabbable, so a mis-drag can be deleted.
+        assert!(dot.hit_test(Point::new(4, 4), 6));
+    }
+
+    #[test]
+    fn distance_clamps_at_the_ends_rather_than_using_the_infinite_line() {
+        let line = Line::new(Point::new(0, 0), Point::new(100, 0));
+        // Beside the middle: perpendicular distance.
+        assert!((line.distance_to(Point::new(50, 10)) - 10.0).abs() < 1e-9);
+        // Past b: measured to b, not to the line through it, which would
+        // report 0 for a point far off the end.
+        assert!((line.distance_to(Point::new(200, 0)) - 100.0).abs() < 1e-9);
+        assert!((line.distance_to(Point::new(-30, 40)) - 50.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn grabbing_prefers_an_endpoint_then_the_segment() {
+        let line = Line::new(Point::new(0, 0), Point::new(100, 0));
+        assert_eq!(line.endpoint_grab(Point::new(2, 2), 6), Some(true), "a");
+        assert_eq!(line.endpoint_grab(Point::new(98, 1), 6), Some(false), "b");
+        assert_eq!(line.endpoint_grab(Point::new(50, 0), 6), None, "middle");
+        assert!(line.hit_test(Point::new(50, 3), 6), "still on the line");
+        assert!(!line.hit_test(Point::new(50, 40), 6));
+    }
+
+    #[test]
+    fn shift_snaps_to_the_eight_directions_and_tracks_the_pointer() {
+        let from = Point::new(100, 100);
+        // Slightly off horizontal snaps flat, keeping the horizontal reach.
+        let nearly = Line::new(from, Point::new(200, 104)).constrained();
+        assert_eq!(nearly.b.y, 100, "snapped to horizontal");
+        assert!((nearly.length() - 100.0).abs() < 1.0, "reach preserved");
+
+        // Slightly off the diagonal snaps to 45 degrees.
+        let diag = Line::new(from, Point::new(160, 172)).constrained();
+        assert!(
+            ((diag.b.x - from.x) - (diag.b.y - from.y)).abs() <= 1,
+            "equal legs: {diag:?}"
+        );
+        assert!((diag.angle_deg() - 45.0).abs() < 1.0);
+
+        // Upward-left still works: the constraint is eight-way, not four.
+        let up_left = Line::new(from, Point::new(30, 26)).constrained();
+        assert!((up_left.angle_deg() - 225.0).abs() < 1.0, "{up_left:?}");
+    }
+
+    #[test]
+    fn constraining_a_zero_length_measure_leaves_it_alone() {
+        let dot = Line::new(Point::new(9, 9), Point::new(9, 9));
+        assert_eq!(dot.constrained(), dot);
+    }
 
     const BOUNDS: Size = Size::new(1920, 1080);
     const BOUNDS_RECT: Rect = Rect::new(0, 0, BOUNDS.w, BOUNDS.h);
@@ -1816,12 +2104,47 @@ mod tests {
     }
 
     #[test]
+    fn clamp_point_lands_inside_and_leaves_interior_points_alone() {
+        let r = Rect::new(10, 20, 30, 40);
+        let inside = Point::new(15, 25);
+        assert_eq!(r.clamp_point(inside), inside);
+        // The far edge is exclusive, matching `contains`.
+        assert_eq!(r.clamp_point(Point::new(100, 100)), Point::new(39, 59));
+        assert_eq!(r.clamp_point(Point::new(-5, -5)), Point::new(10, 20));
+        for p in [
+            Point::new(100, 100),
+            Point::new(-5, -5),
+            Point::new(15, 900),
+        ] {
+            assert!(r.contains(r.clamp_point(p)));
+        }
+    }
+
+    #[test]
+    fn clamp_point_on_a_zero_sized_rect_gives_the_origin_corner() {
+        let r = Rect::new(7, 9, 0, 0);
+        assert_eq!(r.clamp_point(Point::new(100, 100)), Point::new(7, 9));
+    }
+
+    #[test]
+    fn line_bbox_spans_both_endpoints_in_any_direction() {
+        let down = Line::new(Point::new(10, 20), Point::new(40, 60));
+        let up = Line::new(Point::new(40, 60), Point::new(10, 20));
+        assert_eq!(down.bbox(), Rect::new(10, 20, 30, 40));
+        assert_eq!(up.bbox(), down.bbox());
+        // A zero-length ruler still has a placeable caption anchor.
+        let dot = Line::new(Point::new(5, 5), Point::new(5, 5));
+        assert_eq!(dot.bbox(), Rect::new(5, 5, 0, 0));
+    }
+
+    #[test]
     fn tool_kind_cycles_through_the_drawing_tools() {
         assert_eq!(ToolKind::Rect.next(), ToolKind::Ellipse);
         assert_eq!(ToolKind::Ellipse.next(), ToolKind::Triangle);
         assert_eq!(ToolKind::Triangle.next(), ToolKind::Polygon);
         assert_eq!(ToolKind::Polygon.next(), ToolKind::Freehand);
-        assert_eq!(ToolKind::Freehand.next(), ToolKind::Rect);
+        assert_eq!(ToolKind::Freehand.next(), ToolKind::Measure);
+        assert_eq!(ToolKind::Measure.next(), ToolKind::Rect);
         // Record-only kinds cycle back into the modern set.
         assert_eq!(ToolKind::Circle.next(), ToolKind::Triangle);
         assert_eq!(ToolKind::Poly.next(), ToolKind::Rect);

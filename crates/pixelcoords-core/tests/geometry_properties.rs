@@ -6,7 +6,9 @@
 //! bounds its shape. They are the invariants the saved coordinates rest on,
 //! so a counterexample here is a wrong number in someone's `session.json`.
 
-use pixelcoords_core::geometry::{Point, Rect, ResizeHandle, Shape, Size, ToolKind, normalize_deg};
+use pixelcoords_core::geometry::{
+    Line, Point, Rect, ResizeHandle, Shape, Size, ToolKind, normalize_deg,
+};
 use proptest::prelude::*;
 
 /// Bounds big enough to move around in, small enough to hit edges often.
@@ -162,5 +164,70 @@ proptest! {
             return Ok(());
         }
         prop_assert!(shape.hit_test_rotated(deg, shape.click_point()));
+    }
+}
+
+proptest! {
+    /// Swapping a measure's endpoints turns it around: the reported angle
+    /// must differ by exactly half a turn. A measure that failed this
+    /// would report a different direction depending on which end the user
+    /// happened to start the drag from.
+    #[test]
+    fn angle_is_antisymmetric_under_endpoint_swap(
+        ax in -2000i32..2000, ay in -2000i32..2000,
+        bx in -2000i32..2000, by in -2000i32..2000,
+    ) {
+        let a = Point::new(ax, ay);
+        let b = Point::new(bx, by);
+        prop_assume!(a != b);
+        let forward = Line::new(a, b).angle_deg();
+        let back = Line::new(b, a).angle_deg();
+        prop_assert!((forward - (back + 180.0) % 360.0).abs() < 1e-9);
+    }
+
+    /// A ruler measures the same distance wherever it is laid down.
+    #[test]
+    fn length_survives_translation(
+        ax in -2000i32..2000, ay in -2000i32..2000,
+        bx in -2000i32..2000, by in -2000i32..2000,
+        dx in -1000i32..1000, dy in -1000i32..1000,
+    ) {
+        let line = Line::new(Point::new(ax, ay), Point::new(bx, by));
+        prop_assert!((line.length() - line.translated(dx, dy).length()).abs() < 1e-9);
+    }
+
+    /// Shift-constraining lands on one of the eight 45-degree spokes, and
+    /// never on a direction the user was not pointing toward.
+    #[test]
+    fn constraining_snaps_to_a_multiple_of_45_degrees(
+        ax in -500i32..500, ay in -500i32..500,
+        bx in -500i32..500, by in -500i32..500,
+    ) {
+        let line = Line::new(Point::new(ax, ay), Point::new(bx, by));
+        let snapped = line.constrained();
+        prop_assume!(snapped.a != snapped.b);
+        let angle = snapped.angle_deg();
+        let nearest = (angle / 45.0).round() * 45.0;
+        prop_assert!(
+            (angle - nearest).abs() < 1.0 || (angle - nearest).abs() > 359.0,
+            "{angle} is not a multiple of 45"
+        );
+    }
+
+    /// Every point on the segment is zero distance from it, and the
+    /// distance never exceeds the reach to the nearer endpoint.
+    #[test]
+    fn distance_to_a_segment_is_bounded_by_its_endpoints(
+        ax in -500i32..500, ay in -500i32..500,
+        bx in -500i32..500, by in -500i32..500,
+        px in -500i32..500, py in -500i32..500,
+    ) {
+        let line = Line::new(Point::new(ax, ay), Point::new(bx, by));
+        let p = Point::new(px, py);
+        let to_a = f64::from(px - ax).hypot(f64::from(py - ay));
+        let to_b = f64::from(px - bx).hypot(f64::from(py - by));
+        let d = line.distance_to(p);
+        prop_assert!(d >= -1e-9, "distance is never negative: {d}");
+        prop_assert!(d <= to_a.min(to_b) + 1e-9, "{d} exceeded {to_a}/{to_b}");
     }
 }

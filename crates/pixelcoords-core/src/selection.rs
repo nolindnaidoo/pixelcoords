@@ -1,6 +1,42 @@
 //! The set of committed selections plus per-op undo and redo stacks.
 
-use crate::geometry::{Point, ResizeHandle, Shape};
+use crate::geometry::{Line, Point, ResizeHandle, Shape};
+
+/// A two-point measurement laid on the frozen image.
+///
+/// Deliberately not a [`Selection`]: it has no interior, so it produces
+/// no crop, contributes nothing to a cutout, and has no click point for
+/// `assert` or `emit` to answer about. Forcing it through the selection
+/// list would make every one of those grow a special case for a thing
+/// they cannot say anything useful about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Measure {
+    pub line: Line,
+    pub label: String,
+    /// Index into the session's monitor list. A measure lives within one
+    /// monitor's frame, like every shape.
+    pub monitor: usize,
+}
+
+impl Measure {
+    #[must_use]
+    pub const fn new(line: Line, monitor: usize) -> Self {
+        Self {
+            line,
+            label: String::new(),
+            monitor,
+        }
+    }
+}
+
+/// Which end of a measure a drag has hold of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeasureGrab {
+    /// An endpoint: `true` is `a`, `false` is `b`.
+    Endpoint(bool),
+    /// The line itself: drag moves the whole ruler.
+    Move,
+}
 
 /// What a mouse-press on the overlay grabs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,11 +79,21 @@ enum UndoOp {
     RestoreShape { index: usize, shape: Shape },
     RestoreLabel { index: usize, label: String },
     RestoreRotation { index: usize, deg: i32 },
+    // Measures ride the same stack as selections rather than a parallel
+    // one, so Z undoes the last thing the user did whatever kind it was.
+    // Two stacks would undo the last *shape* and leave a ruler drawn
+    // after it standing, which is not what anybody means by undo.
+    RemoveLastMeasure,
+    ReinsertMeasure { index: usize, measure: Measure },
+    RemoveMeasureAt { index: usize },
+    RestoreMeasureLine { index: usize, line: Line },
+    RestoreMeasureLabel { index: usize, label: String },
 }
 
 #[derive(Debug, Default)]
 pub struct SelectionSet {
     items: Vec<Selection>,
+    measures: Vec<Measure>,
     undo: Vec<UndoOp>,
     redo: Vec<UndoOp>,
 }
@@ -61,9 +107,10 @@ impl SelectionSet {
     /// session. Seeding is not an edit: no undo history is created, so
     /// undo in a resumed session stops at the resume point instead of
     /// dismantling the session it reopened.
-    pub fn seed(items: Vec<Selection>) -> Self {
+    pub fn seed(items: Vec<Selection>, measures: Vec<Measure>) -> Self {
         Self {
             items,
+            measures,
             undo: Vec::new(),
             redo: Vec::new(),
         }
@@ -137,6 +184,94 @@ impl SelectionSet {
         });
         self.redo.clear();
         Some(self.items[index].rot_deg)
+    }
+
+    pub fn measures(&self) -> &[Measure] {
+        &self.measures
+    }
+
+    pub fn add_measure(&mut self, measure: Measure) {
+        self.measures.push(measure);
+        self.undo.push(UndoOp::RemoveLastMeasure);
+        self.redo.clear();
+    }
+
+    pub fn delete_measure(&mut self, index: usize) -> bool {
+        if index >= self.measures.len() {
+            return false;
+        }
+        let measure = self.measures.remove(index);
+        self.undo.push(UndoOp::ReinsertMeasure { index, measure });
+        self.redo.clear();
+        true
+    }
+
+    /// Topmost measure on `monitor` that a press at `p` grabs — an
+    /// endpoint first, then the line itself. Most recent wins, as with
+    /// selections.
+    pub fn grab_measure(
+        &self,
+        monitor: usize,
+        p: Point,
+        tolerance: i32,
+    ) -> Option<(usize, MeasureGrab)> {
+        self.measures
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, m)| m.monitor == monitor)
+            .find_map(|(i, m)| {
+                if let Some(is_a) = m.line.endpoint_grab(p, tolerance) {
+                    return Some((i, MeasureGrab::Endpoint(is_a)));
+                }
+                m.line
+                    .hit_test(p, tolerance)
+                    .then_some((i, MeasureGrab::Move))
+            })
+    }
+
+    /// Update a measure mid-drag without recording history; pair with
+    /// `commit_measure` when the drag ends.
+    pub fn set_measure_line_live(&mut self, index: usize, line: Line) {
+        if let Some(m) = self.measures.get_mut(index) {
+            m.line = line;
+        }
+    }
+
+    /// Record a finished measure edit. `original` is the line as it stood
+    /// when the drag began; a drag that ended where it started records
+    /// nothing and does not dirty the session.
+    pub fn commit_measure(&mut self, index: usize, original: Line) -> bool {
+        let Some(m) = self.measures.get(index) else {
+            return false;
+        };
+        if m.line == original {
+            return false;
+        }
+        self.undo.push(UndoOp::RestoreMeasureLine {
+            index,
+            line: original,
+        });
+        self.redo.clear();
+        true
+    }
+
+    /// Set a measure's label. An unchanged label records nothing, the
+    /// same rule the selection labels follow.
+    pub fn label_measure(&mut self, index: usize, label: String) -> bool {
+        let Some(m) = self.measures.get_mut(index) else {
+            return false;
+        };
+        if m.label == label {
+            return false;
+        }
+        let previous = std::mem::replace(&mut m.label, label);
+        self.undo.push(UndoOp::RestoreMeasureLabel {
+            index,
+            label: previous,
+        });
+        self.redo.clear();
+        true
     }
 
     pub fn add(&mut self, selection: Selection) {
@@ -308,6 +443,42 @@ impl SelectionSet {
                     deg: previous,
                 })
             }
+            UndoOp::RemoveLastMeasure => {
+                let measure = self.measures.pop()?;
+                Some(UndoOp::ReinsertMeasure {
+                    index: self.measures.len(),
+                    measure,
+                })
+            }
+            UndoOp::ReinsertMeasure { index, measure } => {
+                let index = index.min(self.measures.len());
+                self.measures.insert(index, measure);
+                Some(UndoOp::RemoveMeasureAt { index })
+            }
+            UndoOp::RemoveMeasureAt { index } => {
+                if index >= self.measures.len() {
+                    return None;
+                }
+                let measure = self.measures.remove(index);
+                Some(UndoOp::ReinsertMeasure { index, measure })
+            }
+            UndoOp::RestoreMeasureLine { index, line } => {
+                let m = self.measures.get_mut(index)?;
+                let previous = m.line;
+                m.line = line;
+                Some(UndoOp::RestoreMeasureLine {
+                    index,
+                    line: previous,
+                })
+            }
+            UndoOp::RestoreMeasureLabel { index, label } => {
+                let m = self.measures.get_mut(index)?;
+                let previous = std::mem::replace(&mut m.label, label);
+                Some(UndoOp::RestoreMeasureLabel {
+                    index,
+                    label: previous,
+                })
+            }
         }
     }
 }
@@ -315,6 +486,97 @@ impl SelectionSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn measures_and_selections_share_one_undo_stack() {
+        // The reason they share it: Z should undo the last thing done,
+        // whatever kind it was. Two stacks would undo the last *shape*
+        // and leave a ruler drawn after it standing.
+        let mut set = SelectionSet::new();
+        set.add(Selection::new(Shape::Rect(Rect::new(0, 0, 10, 10)), 0));
+        set.add_measure(Measure::new(
+            Line::new(Point::new(0, 0), Point::new(50, 0)),
+            0,
+        ));
+        assert_eq!((set.len(), set.measures().len()), (1, 1));
+
+        assert!(set.undo(), "undoes the measure, the most recent edit");
+        assert_eq!((set.len(), set.measures().len()), (1, 0));
+        assert!(set.undo(), "then the selection");
+        assert_eq!((set.len(), set.measures().len()), (0, 0));
+
+        assert!(set.redo());
+        assert!(set.redo());
+        assert_eq!((set.len(), set.measures().len()), (1, 1));
+    }
+
+    #[test]
+    fn a_deleted_measure_comes_back_where_it_was() {
+        let mut set = SelectionSet::new();
+        for x in [10, 20, 30] {
+            set.add_measure(Measure::new(
+                Line::new(Point::new(x, 0), Point::new(x, 40)),
+                0,
+            ));
+        }
+        assert!(set.delete_measure(1));
+        assert_eq!(set.measures().len(), 2);
+        assert!(set.undo());
+        assert_eq!(set.measures()[1].line.a.x, 20, "restored in position");
+    }
+
+    #[test]
+    fn a_measure_drag_that_ends_where_it_began_records_nothing() {
+        let mut set = SelectionSet::new();
+        let line = Line::new(Point::new(0, 0), Point::new(60, 20));
+        set.add_measure(Measure::new(line, 0));
+        set.set_measure_line_live(0, Line::new(Point::new(0, 0), Point::new(99, 99)));
+        set.set_measure_line_live(0, line);
+        assert!(
+            !set.commit_measure(0, line),
+            "a no-op drag must not dirty the session"
+        );
+        // The only history is the add, so one undo empties it.
+        assert!(set.undo());
+        assert!(set.measures().is_empty());
+        assert!(!set.undo());
+    }
+
+    #[test]
+    fn relabeling_a_measure_is_undoable_and_a_no_op_label_is_not() {
+        let mut set = SelectionSet::new();
+        set.add_measure(Measure::new(
+            Line::new(Point::new(0, 0), Point::new(10, 0)),
+            0,
+        ));
+        assert!(set.label_measure(0, "gap".into()));
+        assert!(!set.label_measure(0, "gap".into()), "unchanged label");
+        assert!(set.undo());
+        assert_eq!(set.measures()[0].label, "");
+    }
+
+    #[test]
+    fn grabbing_prefers_an_endpoint_over_the_line_and_respects_the_monitor() {
+        let mut set = SelectionSet::new();
+        set.add_measure(Measure::new(
+            Line::new(Point::new(0, 0), Point::new(100, 0)),
+            0,
+        ));
+        assert_eq!(
+            set.grab_measure(0, Point::new(1, 1), 6),
+            Some((0, MeasureGrab::Endpoint(true)))
+        );
+        assert_eq!(
+            set.grab_measure(0, Point::new(50, 2), 6),
+            Some((0, MeasureGrab::Move))
+        );
+        assert_eq!(set.grab_measure(0, Point::new(50, 40), 6), None);
+        assert_eq!(
+            set.grab_measure(1, Point::new(1, 1), 6),
+            None,
+            "a measure belongs to one monitor's frame"
+        );
+    }
     use crate::geometry::Rect;
 
     fn rect_at(x: i32) -> Shape {
@@ -468,7 +730,7 @@ mod tests {
         let mut sel = Selection::new(Shape::Rect(Rect::new(1, 2, 3, 4)), 0);
         sel.label = "kept".into();
         sel.rot_deg = 30;
-        let mut set = SelectionSet::seed(vec![sel]);
+        let mut set = SelectionSet::seed(vec![sel], Vec::new());
         assert_eq!(set.len(), 1);
         assert_eq!(set.items()[0].label, "kept");
         assert!(!set.undo(), "the resume point is the floor of history");
