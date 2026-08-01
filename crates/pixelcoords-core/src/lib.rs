@@ -16,6 +16,7 @@ pub mod geometry;
 pub mod hotkeys;
 pub mod locate;
 pub mod matcher;
+pub mod points;
 pub mod report;
 pub mod selection;
 pub mod session;

@@ -7,7 +7,8 @@ Examples:
   pixelcoords                          freeze all monitors, mark, S saves
   pixelcoords --target \"Notepad\"       window-relative session
   pixelcoords resume                   pick a saved session, keep editing
-  pixelcoords assert --session <dir> --point 812,440 --label submit
+  pixelcoords assert --session <dir> --point 812,440 --expect submit
+  pixelcoords assert --session <dir> --stdin < points.txt
   pixelcoords emit --session <dir> --format pyautogui
   pixelcoords find --session <dir>
   pixelcoords doctor --json
@@ -89,15 +90,26 @@ pub enum Command {
         #[arg(long, value_name = "QUERY", value_delimiter = ',')]
         monitor: Vec<String>,
     },
-    /// Test a point against a saved session's regions: prints a JSON
-    /// verdict; exits 0 on hit, 1 on miss, 2 on error
+    /// Test one point, or a stream of them, against a saved session's
+    /// regions: prints a JSON report; exits 0 on hit, 1 on miss, 2 on error
     Assert {
         /// Path to a session.json, or the directory containing one
         #[arg(long, value_name = "PATH")]
         session: PathBuf,
         /// The point to test, as X,Y physical pixels
-        #[arg(long, value_name = "X,Y", allow_hyphen_values = true)]
-        point: String,
+        #[arg(
+            long,
+            value_name = "X,Y",
+            allow_hyphen_values = true,
+            required_unless_present = "stdin",
+            conflicts_with = "stdin"
+        )]
+        point: Option<String>,
+        /// Read points from stdin instead: one `X,Y` or `X,Y,label` per
+        /// line, blank lines and `#` comments skipped. A per-line label
+        /// overrides --expect for that line only
+        #[arg(long)]
+        stdin: bool,
         /// The label the point must land in for a hit (case-insensitive).
         /// A miss still reports every region it *did* land in
         #[arg(long, value_name = "TEXT")]

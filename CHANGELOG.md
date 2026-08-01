@@ -9,6 +9,34 @@ version number, for what changed under you.
 
 ## Unreleased
 
+### `assert --stdin` scores a whole trajectory in one process
+
+Scoring an agent run meant one `assert` process per click: a process
+spawn, a session read, and a JSON parse multiplied by every point, with
+the caller stitching the results back together. The session was already
+loaded by the first one.
+
+`--stdin` reads points instead — `X,Y` or `X,Y,label`, one per line,
+blank lines and `#` comments skipped — and answers in a single report
+whose rows are in input order. A thousand points score in one process.
+
+Each row carries its 1-based `line`, counted over *input* lines rather
+than scored points, so a reported line matches the file you wrote. A
+line's own label overrides `--expect` for that line only, so a stream can
+score a run that clicks different things. Only the first two commas are
+structural, so a label can contain commas without quoting.
+
+A single `--point` run omits `line` entirely: a batch adds a field and
+never removes one, so a consumer written against either shape reads the
+other.
+
+Malformed input stops the run naming the line, prints nothing, and exits
+2 — for a malformed line, and for a line naming a region the session does
+not have. Scoring the first six points of a trajectory and stopping would
+report a pass rate over a prefix, which is indistinguishable from a
+complete run. A stream with no points in it at all is refused for the
+same reason, rather than passing vacuously.
+
 ### Breaking: one JSON envelope for every command that scores
 
 `assert` and `find` printed differently shaped documents with separate

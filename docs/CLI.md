@@ -166,10 +166,20 @@ verdict (misses report the nearest region and its distance).
 | Flag | Meaning |
 |------|---------|
 | `--session <PATH>` | The session |
-| `--point <X,Y>` | The point (negatives allowed) |
+| `--point <X,Y>` | The point (negatives allowed); required unless `--stdin` |
+| `--stdin` | Read points from stdin instead — one `X,Y` or `X,Y,label` per line. Conflicts with `--point` |
 | `--expect <TEXT>` | The label the point must land in for a hit (case-insensitive) |
 | `--space global\|monitor\|window` | Which stored coordinates the point is in (default `global`) |
 | `--monitor <N>` | The monitor for `--space monitor` — an **index only**, and a different flag from the overlay's `--monitor` above. This one names a monitor *recorded in the session*, where the index is the record's own identifier; the overlay's picks a display attached right now |
+
+`--stdin` scores a whole trajectory in one process: the session is read
+once instead of once per click. Each result carries its 1-based `line`,
+counted over *input* lines, so blank lines and `#` comments keep their
+numbering and a reported line matches the file you wrote. A line's own
+label overrides `--expect` for that line only. A malformed line — or one
+naming a region the session does not have — stops the run with the line
+number and prints nothing: a partially scored trajectory would report a
+pass rate over a prefix, and the caller could not tell.
 
 `--expect` used to be spelled `--label`, and it does **not** filter the
 report: a miss still lists every region the point did land in, which is
