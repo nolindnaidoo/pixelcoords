@@ -16,11 +16,26 @@ repository.workspace = true
 # bare `capture` — the browse page is exact-match, but free-text search
 # splits the hyphen, so the compound wins both. `hidpi` is the one-crate
 # page next to winit's `dpi`, and mixed-DPI correctness is the whole point.
-keywords = ["screenshot", "screen-capture", "automation", "computer-use", "hidpi"]
-categories = ["command-line-utilities", "multimedia::images", "development-tools"]
+# Keywords earn their slot by adding a term the description does not
+# already carry — crates.io searches name, description, and keywords
+# together, so "screenshot", "screen-capture", and "hidpi" were spending
+# three of five slots on words already one line above. Counts are crates
+# carrying that keyword: automation 1402, testing 2108, ui 1852,
+# agent 3412, against hidpi 3 and computer-use 11.
+keywords = ["screenshot", "automation", "testing", "ui", "agent"]
+# No multimedia::images here. That category is "crates that process or
+# build images", and the binary writing PNG crops is a side effect of
+# what it does, not what it is: a terminal tool you run to get
+# coordinates and verify them. The library, which really does the image
+# work, keeps it.
+categories = [
+    "command-line-utilities",
+    "development-tools::testing",
+    "development-tools",
+]
 
 [dependencies]
-pixelcoords-core = { path = "../pixelcoords-core", version = "0.3.0" }
+pixelcoords-core = { path = "../pixelcoords-core", version = "0.4.0" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"

@@ -1,6 +1,6 @@
 [package]
 name = "pixelcoords-core"
-description = "Platform-free core of pixelcoords: screen geometry, HiDPI and multi-monitor coordinate spaces, the session.json schema, template relocation, point verdicts, and click-code emitters. Cross-platform (macOS, Windows, Linux), no unsafe"
+description = "Platform-free core of pixelcoords: screen geometry, HiDPI and multi-monitor coordinate spaces, the session.json schema, template relocation, point verdicts, click-point resolution, region diffing, and click-code emitters. Cross-platform (macOS, Windows, Linux), no unsafe"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,8 +15,18 @@ repository.workspace = true
 # is the one bridge back to the binary. NOT `command-line-utilities`: this
 # is a library, and filing it there was simply wrong. `computer-vision` is
 # matcher.rs; `graphics` is geometry.rs, draw.rs, and font.rs.
-keywords = ["geometry", "hidpi", "multi-monitor", "screenshot", "computer-use"]
-categories = ["development-tools", "computer-vision", "graphics", "multimedia::images"]
+# Same rule as the binary: "hidpi" and "multi-monitor" were already in
+# the description above and carry 3 and 4 crates respectively, so they
+# bought nothing. `geometry` stays — it is what a library consumer
+# actually searches, and it is the top row of the module table.
+keywords = ["geometry", "screenshot", "automation", "testing", "agent"]
+categories = [
+    "development-tools::testing",
+    "development-tools",
+    "computer-vision",
+    "graphics",
+    "multimedia::images",
+]
 
 [dependencies]
 # Rasterizes the embedded JetBrains Mono for overlay text — pure Rust,

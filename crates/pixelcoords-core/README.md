@@ -1,8 +1,9 @@
 # pixelcoords-core
 
 The platform-free core of [pixelcoords](https://crates.io/crates/pixelcoords):
-the geometry, the `session.json` schema, template relocation, point
-verdicts, and click-code generation — with no window system, no capture
+the geometry, the `session.json` schema, coordinate spaces and units,
+template relocation, point verdicts, click-point resolution, region
+diffing, and click-code generation — with no window system, no capture
 backend, and `#![forbid(unsafe_code)]`.
 
 **Want the tool?** Install the binary: `cargo install pixelcoords`.
@@ -10,7 +11,7 @@ backend, and `#![forbid(unsafe_code)]`.
 
 ```toml
 [dependencies]
-pixelcoords-core = "0.3"
+pixelcoords-core = "0.4"
 ```
 
 ## What you'd use it for
@@ -92,7 +93,7 @@ for selection in &session.selections {
 #
 # const EXAMPLE_SESSION: &str = r#"{
 #   "schema": 1,
-#   "app": { "name": "pixelcoords", "version": "0.3.0" },
+#   "app": { "name": "pixelcoords", "version": "0.4.0" },
 #   "created_utc": "2026-07-29T00:00:00Z",
 #   "monitors": [
 #     { "index": 0, "name": "Built-in", "primary": true,
@@ -190,7 +191,7 @@ assert_eq!(miss.nearest.expect("a nearest region").region.label, "submit");
 #
 # const EXAMPLE_SESSION: &str = r#"{
 #   "schema": 1,
-#   "app": { "name": "pixelcoords", "version": "0.3.0" },
+#   "app": { "name": "pixelcoords", "version": "0.4.0" },
 #   "created_utc": "2026-07-29T00:00:00Z",
 #   "monitors": [
 #     { "index": 0, "name": "Built-in", "primary": true,
@@ -225,7 +226,7 @@ assert!(snippet.contains("pyautogui"));
 #
 # const EXAMPLE_SESSION: &str = r#"{
 #   "schema": 1,
-#   "app": { "name": "pixelcoords", "version": "0.3.0" },
+#   "app": { "name": "pixelcoords", "version": "0.4.0" },
 #   "created_utc": "2026-07-29T00:00:00Z",
 #   "monitors": [
 #     { "index": 0, "name": "Built-in", "primary": true,
@@ -252,20 +253,28 @@ physical pixels on Windows but logical points on macOS. `cliclick` and
 |---|---|---|
 | `session` | the `session.json` schema | **the contract** — versioned, grows additively |
 | `geometry` | shapes, hit-testing, rotation, polygon math | stable, pure arithmetic |
-| `locate` | masked template matching, scoring, `FindReport` | stable shape, tuned thresholds |
+| `space` | coordinate origins and units, and the conversion between them | stable shape |
+| `report` | the `Report<T>` envelope every command prints | **the CLI contract** — versioned |
+| `locate` | masked template matching, scoring, fixed-location `TemplateStats` | stable shape, tuned thresholds |
 | `verdict` | point-in-region assessment | stable shape |
+| `resolve` | click points per selection, in a chosen space and units | stable shape |
+| `diff` | per-region masked pixel comparison | stable shape |
+| `wait` | poll budgets and the match/change conditions | stable shape |
 | `emit` | pyautogui / cliclick / xdotool generators | stable shape |
+| `points`, `duration` | the `X,Y[,label]` stream grammar, `30s`/`500ms` durations | strict parsers, stable |
 | `selection` | the undo/redo edit engine | overlay internals |
 | `draw`, `font` | CPU rasterizer, embedded JetBrains Mono | overlay internals |
 | `hotkeys`, `config`, `strings`, `matcher` | binding grammar, strict TOML config, UI text, window-title matching | overlay internals |
 
 **Stability, honestly.** This stays on 0.x and shares a version with the
-binary, so a minor bump can change any signature here. The **session
-schema is the part with a real compatibility promise**: it is versioned
-(`SCHEMA_VERSION`), additions are optional fields, and consumers that
-ignore unknown keys keep working. The top rows are what tools are
-actually built on; the overlay internals exist to serve the binary and
-move with it. Pin a caret range and read the
+binary, so a minor bump can change any signature here. **Two things carry
+a real compatibility promise**, and they are versioned separately because
+they version different things: the session schema on disk
+(`session::SCHEMA_VERSION`, still 1) and the documents the commands print
+(`report::CLI_SCHEMA_VERSION`, now 2). Additions to either are optional
+fields, and consumers that ignore unknown keys keep working. The top rows
+are what tools are actually built on; the overlay internals exist to serve
+the binary and move with it. Pin a caret range and read the
 [CHANGELOG](https://github.com/nolindnaidoo/pixelcoords/blob/main/CHANGELOG.md)
 before upgrading.
 

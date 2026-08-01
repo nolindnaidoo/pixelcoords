@@ -7,7 +7,7 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
-## Unreleased
+## 0.4.0
 
 ### `wait`: block until the screen settles
 
@@ -55,6 +55,15 @@ is refused rather than assumed, because it reads as seconds to one person
 and milliseconds to another. `--min-score` is a correlation in `0..=1` and
 is deliberately not spelled `--tolerance`, which is `diff`'s percentage of
 pixels — different quantity, different direction, different default.
+
+`--min-score` also turns out to be the answer to the one rough edge found
+while verifying this on hardware: a blinking text cursor inside a watched
+region will fire `--for change` on its own. Correlation weighs a few
+very high-contrast pixels heavily when the rest of the region is plain —
+101 pixels out of 38,400 measured at 0.805, under the 0.9 floor. Lowering
+the floor ignores the cursor and still catches a real change. Documented
+with the numbers in `docs/OUTPUT.md`; `--for match` is unaffected, because
+polling absorbs the flicker.
 
 `polls` and `elapsed_ms` are new optional fields on the shared report
 envelope, absent from every command that does not loop. They are
@@ -211,6 +220,13 @@ rather than reinterpreted because the alternative is a script that still
 runs, still exits 0 or 1, and quietly asks a different question. It comes
 back on `assert` with the set-restricting meaning next release, which is
 an addition rather than a second break.
+
+### Two `find` messages, said the way the other commands say them
+
+Four commands now share one loader, so `find`'s wording had to stop being
+its own. Its empty-session message drops "to find", and its unknown-label
+list is deduplicated case-insensitively the way `emit`'s and `assert`'s
+always were. Neither changes an exit code or a document.
 
 ### The library
 
