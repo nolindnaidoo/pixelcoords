@@ -9,6 +9,46 @@ version number, for what changed under you.
 
 ## Unreleased
 
+### `resolve`: where to act for a label, in the units your API speaks
+
+Everything an executor needs already lived here, in pieces each consumer
+had to reassemble: the region and its monitor's scale in the session, the
+interior point in `click_point`, drift correction in `find`, and the
+per-platform unit convention baked into `emit`'s snippets. A consumer
+that wanted the one thing every consumer wants — the point to act on,
+right now, in the space its API speaks — had to call `find`, parse a
+bbox, link this crate for the click point, then redo a DPI conversion
+`emit` already knew how to do.
+
+Every reassembly is a chance to get DPI wrong, and it pushes geometry
+into consumers, which is what `pixelcoords-core` exists to prevent.
+
+```
+pixelcoords resolve --session shots --label submit --units auto
+```
+
+`--units auto` is the flag's reason to exist: logical points on macOS,
+physical pixels on Windows and X11. Each selection converts through *its
+own* monitor's scale, so a mixed-DPI desktop comes out right without the
+caller knowing it was mixed. `scale` is reported alongside, so the
+conversion can be checked rather than trusted.
+
+Without `--relocate` it is pure session math — headless, instant, no
+capture and no screen-recording permission, so it runs in CI. With it,
+one capture per monitor serves every label, drift is applied in physical
+pixels before the units convert, and a region found in two places comes
+back with no score and takes `ok` false: acting on the wrong instance is
+worse than not acting.
+
+`--space monitor` needs no `--monitor` index here, unlike `assert`. Every
+row says which monitor it belongs to, and each is answered in that
+monitor's own coordinates — there is nothing for an index to
+disambiguate.
+
+`emit` is unchanged and stays what it is: ready-to-paste code for humans.
+`resolve` is the machine answer underneath it, which is why the `json`
+emit target that was once planned is not being built.
+
 ### `assert --stdin` scores a whole trajectory in one process
 
 Scoring an agent run meant one `assert` process per click: a process

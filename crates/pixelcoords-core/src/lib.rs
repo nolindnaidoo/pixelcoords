@@ -18,6 +18,7 @@ pub mod locate;
 pub mod matcher;
 pub mod points;
 pub mod report;
+pub mod resolve;
 pub mod selection;
 pub mod session;
 pub mod space;

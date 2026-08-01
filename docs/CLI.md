@@ -5,9 +5,10 @@ Every command, flag, and exit code. The tool is a loop:
 ```
 pixelcoords            # 1. freeze, mark, save a session
 pixelcoords assert     # 2. score points against it
-pixelcoords emit       # 3. generate click code from it
-pixelcoords find       # 4. re-locate its regions after the UI drifts
-pixelcoords resume     # 5. reopen it and keep editing
+pixelcoords resolve    # 3. ask where to act, in your API's units
+pixelcoords emit       # 4. generate click code from it
+pixelcoords find       # 5. re-locate its regions after the UI drifts
+pixelcoords resume     # 6. reopen it and keep editing
 ```
 
 Exit codes are the API everywhere: **0** success/hit/found, **1**
@@ -200,6 +201,42 @@ tool's own coordinate convention.
 | `--session <PATH>` | The session |
 | `--format pyautogui\|cliclick\|xdotool` | The automation tool |
 | `--label <TEXT>` | Emit only this label |
+
+## `resolve`
+
+Answer "where do I act for this label, right now" — the click point per
+selection, in the space and units your API speaks. Exit 0 resolved, 1 not
+resolvable, 2 malformed. Stdout is a versioned JSON report.
+
+| Flag | Meaning |
+|------|---------|
+| `--session <PATH>` | The session |
+| `--label <TEXT>` | Resolve only this label |
+| `--space global\|monitor\|window` | Which origin the answer is measured from (default `global`) |
+| `--units auto\|physical\|logical` | Which scale the answer is in (default `auto`) |
+| `--relocate` | Capture first and correct for drift |
+
+`--units auto` is the flag's reason to exist: logical points on macOS,
+physical pixels on Windows and X11 — what each platform's input APIs
+actually expect. Each selection converts through **its own monitor's**
+scale, so a mixed-DPI desktop comes out right without the caller knowing
+it was mixed.
+
+`--space` and `--units` are separate questions: an origin says where
+`(0, 0)` is, units say whether one step is a device pixel or a point.
+Unlike `assert --space monitor`, this one needs no `--monitor` index —
+every row reports the monitor it belongs to, and each is answered in that
+monitor's own coordinates.
+
+Without `--relocate` it is pure session math: headless, instant, no
+capture and no screen-recording permission. With it, one capture per
+monitor serves every label, drift is applied before the units convert,
+and a region that could not be found unambiguously comes back without a
+point and takes `ok` to false — a region matching in two places has no
+coordinate worth handing to an executor.
+
+`emit` remains the human-facing sibling: ready-to-paste code. `resolve`
+is the machine answer underneath it.
 
 ## `find`
 
