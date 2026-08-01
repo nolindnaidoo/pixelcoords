@@ -97,11 +97,30 @@ pub fn write_session(
     }
 
     let mut crops = Vec::new();
+    let mut colors: Vec<Option<String>> = Vec::new();
     for (i, sel) in selections.items().iter().enumerate() {
         let (_, frame) = frames
             .iter()
             .find(|(m, _)| m.index == sel.monitor)
             .with_context(|| format!("selection {i} references unknown monitor {}", sel.monitor))?;
+        // Sampled every save rather than remembered, which is what makes
+        // a resumed session honest: the frames are the session's own
+        // screenshots, so a selection that moved gets the color it moved
+        // onto, and one that did not gets the identical byte back.
+        //
+        // The click point is taken from the unrotated shape deliberately.
+        // A rect rotates about its bbox center, which *is* its click
+        // point, and triangles and polys store rotation baked into their
+        // vertices — so no kind has a click point that rotation moves.
+        colors.push(
+            pixelcoords_core::draw::sample_rgba(
+                frame.as_raw(),
+                frame.width() as i32,
+                frame.height() as i32,
+                sel.shape.click_point(),
+            )
+            .map(pixelcoords_core::draw::Color::to_hex),
+        );
         let crop = WrittenCrop {
             name: crop_file_name(i, &sel.label),
             shape: sel.shape.clone(),
@@ -160,7 +179,8 @@ pub fn write_session(
         &crop_names(&crops),
         target.cloned(),
     )
-    .with_meta(meta.platform.clone(), meta.capture, meta.name.clone());
+    .with_meta(meta.platform.clone(), meta.capture, meta.name.clone())
+    .with_colors(&colors);
 
     let json_path = dir.join("session.json");
     let json = serde_json::to_string_pretty(&session).context("serializing session")?;
@@ -808,6 +828,86 @@ mod tests {
         // global = origin_px (100, 0) + local (5, 6).
         assert_eq!(json["selections"][0]["global_px"]["x"], 105);
         assert_eq!(json["selections"][0]["global_px"]["y"], 6);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn each_selection_records_the_color_at_its_click_point() {
+        let dir = std::env::temp_dir().join("pixelcoords-test-color");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // A frame that is one color everywhere except a single known
+        // pixel, placed exactly where the rect's click point lands, so a
+        // sample taken anywhere else is visibly the wrong answer rather
+        // than accidentally right.
+        let mut frame = RgbaImage::from_pixel(100, 60, image::Rgba([9, 9, 9, 255]));
+        let rect = pixelcoords_core::geometry::Rect::new(20, 10, 10, 8);
+        let click = Shape::Rect(rect).click_point();
+        frame.put_pixel(
+            click.x as u32,
+            click.y as u32,
+            image::Rgba([0x3A, 0x7B, 0xD5, 255]),
+        );
+
+        let mut selections = SelectionSet::new();
+        selections.add(Selection::new(Shape::Rect(rect), 0));
+        let json_path = write_session(
+            &dir,
+            &[(&monitor(), &frame)],
+            &selections,
+            None,
+            &SessionMeta::default(),
+            true,
+            &[],
+        )
+        .unwrap()
+        .json_path;
+
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        assert_eq!(json["selections"][0]["color"], "#3A7BD5");
+        assert_eq!(json["schema"], 1, "the color is additive; schema holds");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_selection_off_the_frame_records_no_color_rather_than_a_wrong_one() {
+        let dir = std::env::temp_dir().join("pixelcoords-test-color-outside");
+        let _ = std::fs::remove_dir_all(&dir);
+        let frame = checker_frame(100, 60);
+        let mut selections = SelectionSet::new();
+        // A region hanging off the bottom-right corner: it still overlaps
+        // the frame, so the crop is written and the save succeeds — but
+        // its center, and therefore its click point, is past the edge.
+        // Clamping would report the corner pixel as though it were the
+        // region's; absent is the honest answer.
+        //
+        // (A selection *entirely* off-frame cannot reach here at all —
+        // `write_crop` refuses it first.)
+        let rect = pixelcoords_core::geometry::Rect::new(95, 55, 20, 20);
+        assert_eq!(
+            Shape::Rect(rect).click_point(),
+            Point::new(105, 65),
+            "the premise: this click point is outside a 100x60 frame"
+        );
+        selections.add(Selection::new(Shape::Rect(rect), 0));
+        let json_path = write_session(
+            &dir,
+            &[(&monitor(), &frame)],
+            &selections,
+            None,
+            &SessionMeta::default(),
+            true,
+            &[],
+        )
+        .unwrap()
+        .json_path;
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        assert!(
+            json["selections"][0].get("color").is_none(),
+            "no color is better than the nearest one"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
