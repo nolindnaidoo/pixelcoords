@@ -35,7 +35,7 @@ pixelcoords-captures/20260727-113542-097/
 ```json
 {
   "schema": 1,
-  "app": { "name": "pixelcoords", "version": "0.5.2" },
+  "app": { "name": "pixelcoords", "version": "0.5.3" },
   "created_utc": "2026-07-27T11:35:42Z",
   "monitors": [
     {

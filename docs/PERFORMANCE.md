@@ -15,7 +15,7 @@ a machine attached is not a measurement.
 | Machine | Apple M5 Pro, 24 GB |
 | OS | macOS 26.4.1 |
 | Toolchain | rustc 1.97.1, `--release` (LTO thin, `codegen-units = 1`) |
-| Version | pixelcoords 0.5.2 |
+| Version | pixelcoords 0.5.3 |
 | Taken | 2026-08-02 |
 
 Reproduce with:
@@ -37,17 +37,24 @@ against a flat image is not a number anyone wants.
 
 | Operation | Size | Median |
 |---|---|---|
-| `resolve`, all labels | 1 selection | 166 ns |
-| `resolve`, all labels | 40 selections | 3.3 µs |
-| `resolve`, all labels | 400 selections | 20.4 µs |
-| `resolve`, one label | 400 selections | 3.5 µs |
-| `assert`, one point | 400 selections | 3.0 µs |
-| `locate` (full-frame NCC) | 48×24 crop | 270 ms |
-| `locate` (full-frame NCC) | 160×90 crop | 196 ms |
-| `locate` (full-frame NCC) | 400×300 crop | 1.38 s |
-| `diff`, one region | 48×24 crop | 2.0 µs |
-| `diff`, one region | 160×90 crop | 19.5 µs |
+| `resolve`, all labels | 1 selection | 84 ns |
+| `resolve`, all labels | 40 selections | 2.0 µs |
+| `resolve`, all labels | 400 selections | 14.3 µs |
+| `resolve`, one label | 400 selections | 2.0 µs |
+| `assert`, one point | 400 selections | 2.0 µs |
+| `locate` (full-frame NCC) | 48×24 crop | 272 ms |
+| `locate` (full-frame NCC) | 160×90 crop | 198 ms |
+| `locate` (full-frame NCC) | 400×300 crop | 1.40 s |
+| `diff`, one region | 48×24 crop | 1.8 µs |
+| `diff`, one region | 160×90 crop | 20.6 µs |
 | `diff`, one region | 400×300 crop | 165 µs |
+
+Read the microsecond rows as an order of magnitude, not a constant. A
+median of 21 runs still moves 30% between runs at that scale — repeated
+measurement put `resolve` over 400 selections at 14µs and 20µs on the
+same machine minutes apart. The millisecond rows are stable to within a
+percent or two, which is why the `locate` conclusion below is worth
+drawing and a 2µs-versus-3µs difference is not.
 
 **`resolve` really is instant.** The README calls it that; it is
 microseconds, and it captures nothing.
@@ -73,13 +80,14 @@ uses `hyperfine` and reports properly, this was taken with a loop because
 
 | Command | Mean |
 |---|---|
-| `resolve --units auto` | 13.2 ms |
-| `assert --point` | 4.5 ms |
-| `emit --format pyautogui` | 4.5 ms |
+| `resolve --units auto` | 15.8 ms |
+| `assert --point` | 4.2 ms |
+| `emit --format pyautogui` | 4.3 ms |
 
-The gap between 3 µs of `assert` math and 4.5 ms of `assert` command is
+The gap between 2 µs of `assert` math and 4.2 ms of `assert` command is
 the trip, not the answer: process start, reading the session, and
-printing.
+printing. That ratio — roughly **2000×** — is the whole case for
+`--stdin`, and the next table is it measured.
 
 ### What `--stdin` amortizes
 
@@ -89,10 +97,10 @@ to answer a question the first one already had the data for. Measured,
 
 | | Total | Per point |
 |---|---|---|
-| One process, `--stdin` | 10.0 ms | **0.100 ms** |
-| 100 processes, `--point` | 433.8 ms | 4.338 ms |
+| One process, `--stdin` | 7.8 ms | **0.078 ms** |
+| 100 processes, `--point` | 384.8 ms | 3.848 ms |
 
-**43× per point.** The claim holds, and the reason is what it said: the
+**49× per point.** The claim holds, and the reason is what it said: the
 per-point math is microseconds either way — what disappears is 99 process
 starts and 99 session parses.
 
