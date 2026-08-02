@@ -7,6 +7,61 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
+## 0.5.2
+
+### Nothing happens silently
+
+Three places did something without telling you, and one of them was not
+doing it at all.
+
+**Shift mid-gesture only reached resizing.** The function that re-applies
+the modifier said it existed "so the shape follows the modifier without
+the cursor having to move" — and then handled one gesture and returned
+early for the rest, with no repaint. Hold Shift while drawing an ellipse
+expecting a circle, or while dragging a measure endpoint expecting a 45°
+snap, and nothing happened until you moved the mouse a pixel. Every
+gesture that reads the modifier now answers to it.
+
+That also removed a duplicate: the function carried its own copy of the
+resize math and passed the raw cursor where every other resize passes the
+snapped one, so pressing Shift mid-resize used to jump the shape off the
+edge it had snapped to.
+
+**Typing past a label's 64 characters did nothing at all** — no
+character, no message, no reason. The cap is right; a label becomes part
+of a crop's filename and filesystems have opinions about length. It now
+says so when it turns a keystroke away.
+
+It was also enforced only where you type. A session read from disk
+skipped it, so an edited file with a long label sailed in and failed at
+the filesystem on the next save, which is a confusing place to learn
+about a limit. Both paths hold it now.
+
+**Regular polygons clamped at 12 sides**, which nothing documented and
+nothing could reach — the digit keys stop at 9, so 10 through 12 were a
+dead range, and asking the library for a 100-gon returned a dodecagon
+with no indication why. The bound is 1000 now and explains itself.
+
+### Limits and resources, written down
+
+Undo history, selection count, and session size are unbounded on purpose:
+a wall you hit mid-session is worse than memory you chose to spend. That
+was true before and nowhere stated, which makes it indistinguishable from
+an oversight. [CONFIGURATION.md](docs/CONFIGURATION.md#limits-and-resources)
+now lists what is unbounded and what each ceiling costs — a snap radius
+is a real O(radius²) cost curve, a thickness bound is typo protection,
+and the doc says which is which.
+
+### Under the hood
+
+The keyboard layer had no test coverage — not because the logic needed a
+window, but because it sat behind a winit type a test cannot construct.
+Decoding now happens in one place that makes no decisions, and the
+decisions happen somewhere a test can reach. No behavior changed; all 160
+existing tests passed unmodified before a single new one was written, and
+there are now 24 more covering what was dark. The Shift bug was hiding in
+that dark.
+
 ## 0.5.1
 
 ### Untrusted input cannot crash or lie
