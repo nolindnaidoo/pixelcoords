@@ -9,6 +9,31 @@ version number, for what changed under you.
 
 ## Unreleased
 
+### Breaking: two unused items leave `pixelcoords-core`
+
+`Snap::is_hit` and `Report::polled` are gone. Neither had a caller —
+`wait` sets `polls` and `elapsed_ms` on the fields directly, and the
+overlay reads `Snap`'s axes rather than asking the convenience question.
+Both are one expression to write inline if you were using them.
+
+Small, but a break: removing a public item from a published crate is one
+whatever its size, and that is what makes this release a minor rather
+than a patch.
+
+### `R` mid-drag refuses instead of quitting
+
+`Release::Quit` meant two unrelated things — "this is the last frame, so
+end the run" and "a gesture is in flight". A release arriving mid-drag
+took the second path into the first and ended the session, unsaved marks
+included.
+
+It was unreachable from the keyboard: `allowed_mid_gesture` lets nothing
+but `Quit` through while the mouse is down. But the safety lived in a
+gate in a different function with nothing connecting the two, and quitting
+was the wrong half of a false choice — refusing renumbers nothing *and*
+keeps the marks. Now it refuses, with the same flash a frame still
+holding marks already gave.
+
 ### The overlay's numbers are yours now
 
 Seven values that were constants in the source are configuration, each

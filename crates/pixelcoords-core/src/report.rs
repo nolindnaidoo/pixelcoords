@@ -97,19 +97,6 @@ impl<T> Report<T> {
             results,
         }
     }
-
-    /// Record how much polling produced this answer.
-    ///
-    /// Nothing calls this: `wait` sets `polls` and `elapsed_ms` on the
-    /// fields directly. Kept for now rather than removed mid-patch,
-    /// because dropping a public item from a published crate is a break
-    /// and belongs in a minor.
-    #[must_use]
-    pub fn polled(mut self, polls: u32, elapsed_ms: u64) -> Self {
-        self.polls = Some(polls);
-        self.elapsed_ms = Some(elapsed_ms);
-        self
-    }
 }
 
 #[cfg(test)]
@@ -187,8 +174,11 @@ mod tests {
         let json = serde_json::to_value(&still).unwrap();
         assert!(json.get("polls").is_none() && json.get("elapsed_ms").is_none());
 
-        let polled = Report::captured(Command::Wait, "t".into(), true, vec![Row { hit: true }])
-            .polled(61, 30_412);
+        // Set on the fields, which is how `wait` does it — the builder
+        // that used to wrap this was never called by anything.
+        let mut polled = Report::captured(Command::Wait, "t".into(), true, vec![Row { hit: true }]);
+        polled.polls = Some(61);
+        polled.elapsed_ms = Some(30_412);
         let json = serde_json::to_value(&polled).unwrap();
         assert_eq!(json["polls"], 61);
         assert_eq!(

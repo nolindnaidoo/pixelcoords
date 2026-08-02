@@ -77,11 +77,6 @@ impl Snap {
             self.y.map_or(p.y, |hit| hit.at),
         )
     }
-
-    #[must_use]
-    pub const fn is_hit(self) -> bool {
-        self.x.is_some() || self.y.is_some()
-    }
 }
 
 /// Per-pixel edge strength for one frozen frame, precomputed once.
@@ -608,8 +603,6 @@ mod tests {
             y: None,
         };
         assert_eq!(only_x.apply(Point::new(40, 7)), Point::new(42, 7));
-        assert!(only_x.is_hit());
-        assert!(!Snap::default().is_hit());
     }
 
     #[test]
