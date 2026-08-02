@@ -19,7 +19,7 @@ the machine and date they were taken on, plus the two harnesses that
 produce them — a core example and a `hyperfine` script. Neither is a test
 or a CI gate; a clock in CI is a flaky job.
 
-`resolve` is microseconds and `--stdin` is 43x per point, so both claims
+`resolve` is microseconds and `--stdin` is 49x per point, so both claims
 hold. The number nobody had is `locate`: a full-frame normalized
 cross-correlation is 196ms for a 160x90 crop against a 3024x1964 frame,
 which is what `find` and `wait --for match` pay per region per poll. That
