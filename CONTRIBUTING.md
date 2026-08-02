@@ -3,10 +3,10 @@
 Thanks for your interest. pixelcoords runs verified on macOS, Windows,
 and Linux, but not every combination has met real hardware: fractional
 scaling is unverified everywhere, multi-monitor outside macOS is
-test-only, and the newest overlay work has only had a human run on
-macOS. The planned feature set is complete, so the most valuable
+test-only, and nothing since 0.5.1 has been driven by hand on any
+platform. The planned feature set is complete, so the most valuable
 contributions now are bug reports from real machines and small, focused
-fixes.
+fixes — a run on a machine we do not have is worth more than a patch.
 
 ## Bug reports
 
