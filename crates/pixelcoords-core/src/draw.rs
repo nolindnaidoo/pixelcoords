@@ -4,7 +4,7 @@
 //! fully off-buffer is safe and silent.
 
 use crate::font;
-use crate::geometry::{Line, Point, Rect, Shape, Size};
+use crate::geometry::{Line, Point, Rect, Shape, Size, scanline_spans};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Color {
@@ -533,27 +533,6 @@ pub fn smart_text_position(bbox: Rect, bounds: Size, text_len: usize, scale: i32
         y = bounds.h - text_h;
     }
     Point::new(x, y)
-}
-
-/// The sorted x positions where the polygon's edges cross the horizontal
-/// line through the center of pixel row `y`. Sampling mid-pixel sidesteps
-/// the vertex-exactly-on-scanline double-count.
-fn scanline_spans(points: &[Point], row: i32) -> Vec<f64> {
-    let mid = f64::from(row) + 0.5;
-    let count = points.len();
-    let mut crossings = Vec::new();
-    for i in 0..count {
-        let from = points[i];
-        let to = points[(i + 1) % count];
-        let (from_y, to_y) = (f64::from(from.y), f64::from(to.y));
-        if (from_y < mid) == (to_y < mid) {
-            continue;
-        }
-        let t = (mid - from_y) / (to_y - from_y);
-        crossings.push(f64::from(from.x) + t * f64::from(to.x - from.x));
-    }
-    crossings.sort_by(f64::total_cmp);
-    crossings
 }
 
 /// Whether offset (`dx`, `dy`) lies inside the origin-centered ellipse
