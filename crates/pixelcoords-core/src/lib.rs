@@ -23,6 +23,7 @@ pub mod report;
 pub mod resolve;
 pub mod selection;
 pub mod session;
+pub mod snap;
 pub mod space;
 pub mod strings;
 pub mod verdict;

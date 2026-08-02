@@ -9,6 +9,45 @@ version number, for what changed under you.
 
 ## Unreleased
 
+### Marks land on edges
+
+The last few pixels of a precise mark used to be done by eye — the loupe
+and the arrow keys got you there, but you did the aiming. Now the point
+you are placing is pulled onto the UI edges already present in the frozen
+screenshot: drag a rect roughly around a button and it lands on the
+button, exactly, in one gesture.
+
+A frozen screen is the right substrate for this. The image cannot change
+under the detector, so a snap is reproducible, and there is no live
+element to fight. Detection is pixels only — a luma gradient, no
+accessibility tree, no toolkit introspection — so it works identically on
+a native app, a game, and a screenshot of either.
+
+Two decisions are worth knowing because you can feel both. The threshold
+**adapts to each frame** rather than being an absolute number: a cut
+tuned on a light theme finds nothing on a dark one. And a boundary sits
+on the **first pixel of the new region**, so snapping both sides of a
+40-pixel button gives 20 and 60 and the rect between them is 40 wide —
+not 39. When a snap happens the overlay draws the edge that captured the
+point, along its detected extent, because seeing *what* caught you is the
+difference between trusting the placement and wondering why the pointer
+moved.
+
+`X` toggles snapping for the run and the control panel's `X` row shows
+the state. It does not persist — `[snap]` in the config owns the default,
+with `enabled` and a `radius` in logical pixels so one setting behaves the
+same on a Retina panel and a 1x one.
+
+**Arrow-key nudging is never snapped.** Arrows mean exactly one pixel;
+a feature that quietly overrode them would make the one exact tool in the
+overlay inexact. Freehand strokes are not snapped either — a path of
+snapped points is a jagged path.
+
+Config values are now range-checked when the file loads rather than when
+the feature is first used, so `pixelcoords doctor --config` refuses
+exactly what a launch would. A file that looks valid until you reach the
+setting it breaks is a file that lies.
+
 ### A ruler on the screen
 
 `W` now cycles to a sixth tool that draws a measurement instead of a

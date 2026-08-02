@@ -21,10 +21,18 @@ target_color = "#FFB000"   # border around the --target window
 thickness = 2              # outline width in logical px (0 hides outlines)
 fill = false               # fill shapes instead of outlining
 
+# Edge snapping: the drawn point is pulled onto UI edges detected in the
+# frozen screenshot. X toggles it for the rest of a run (the toggle does
+# not persist — this file owns the default). Arrow-key nudging is never
+# snapped; it always means exactly one pixel.
+[snap]
+enabled = true             # snapping starts on
+radius = 8                 # search distance in logical px (1-64)
+
 # Extra key bindings; later entries override earlier ones (and these
 # override the defaults). ACTIONS: quit, save, next_tool, delete_at_cursor,
 # label_edit_at_cursor, undo, redo, cycle_overlap, toggle_panel,
-# name_session, release_monitor, rotate_ccw, rotate_cw.
+# name_session, release_monitor, rotate_ccw, rotate_cw, toggle_snap.
 # EDGE: press (default), release, repeat. WHEN: has_selection, cursor_in.
 #
 # Example: bring back bracket-key rotation alongside Q/E.

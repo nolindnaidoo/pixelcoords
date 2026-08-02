@@ -17,6 +17,8 @@ pub enum ConfigError {
     Color(String),
     #[error("thickness {0} is out of range (0-512)")]
     Thickness(u32),
+    #[error("[snap] radius {0} is out of range (1-64 logical pixels)")]
+    SnapRadius(u32),
     #[error(transparent)]
     Hotkey(#[from] HotkeyError),
     #[error(
@@ -32,6 +34,31 @@ pub struct Config {
     pub style: StyleConfig,
     pub hotkeys: Vec<HotkeyEntry>,
     pub capture: CaptureConfig,
+    pub snap: SnapConfig,
+}
+
+/// Edge snapping: whether it starts on, and how far it reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SnapConfig {
+    /// The launch default. Snapping starts **on**: the radius is small
+    /// enough that placement away from an edge is untouched, and the
+    /// feature is worthless if it has to be discovered before it helps.
+    /// The toggle key flips it live and does not persist — this file owns
+    /// the default.
+    pub enabled: bool,
+    /// Search radius in **logical** pixels, scaled per monitor's DPI, so
+    /// one config behaves the same on a Retina panel and a 1x one.
+    pub radius: u32,
+}
+
+impl Default for SnapConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            radius: 8,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -92,6 +119,25 @@ pub struct HotkeyEntry {
     pub when: Option<String>,
 }
 
+/// Validated snapping settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapSettings {
+    pub enabled: bool,
+    /// Logical pixels; the overlay multiplies by each monitor's UI scale.
+    pub radius: i32,
+}
+
+impl Default for SnapSettings {
+    /// What `SnapConfig::default()` resolves to, without going through
+    /// the fallible path — the defaults are in range by construction.
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            radius: 8,
+        }
+    }
+}
+
 /// Validated, ready-to-use style values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Style {
@@ -116,6 +162,22 @@ impl Config {
             target: parse_hex_color(&s.target_color)?,
             thickness: s.thickness as i32,
             fill: s.fill,
+        })
+    }
+
+    /// Snapping settings, with the radius range-checked.
+    ///
+    /// A radius of 0 would be a silently disabled feature and a huge one
+    /// would drag the cursor across half the screen; both are more likely
+    /// a typo than an intent, and this module's whole premise is that a
+    /// nonsense number is an error rather than a quiet default.
+    pub fn resolve_snap(&self) -> Result<SnapSettings, ConfigError> {
+        if self.snap.radius == 0 || self.snap.radius > 64 {
+            return Err(ConfigError::SnapRadius(self.snap.radius));
+        }
+        Ok(SnapSettings {
+            enabled: self.snap.enabled,
+            radius: i32::try_from(self.snap.radius).unwrap_or(64),
         })
     }
 
@@ -428,5 +490,40 @@ mod tests {
             cfg.resolve_bindings(&[]),
             Err(ConfigError::Hotkey(_))
         ));
+    }
+
+    #[test]
+    fn snap_defaults_are_on_with_a_small_radius() {
+        let settings = Config::default().resolve_snap().unwrap();
+        assert!(settings.enabled, "snapping is on unless turned off");
+        assert_eq!(settings.radius, 8);
+    }
+
+    #[test]
+    fn a_snap_radius_outside_the_range_is_an_error_not_a_default() {
+        for radius in [0, 65, 10_000] {
+            let mut config = Config::default();
+            config.snap.radius = radius;
+            assert_eq!(
+                config.resolve_snap(),
+                Err(ConfigError::SnapRadius(radius)),
+                "radius {radius}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_snap_table_parses_and_rejects_unknown_keys() {
+        let config: Config = toml::from_str("[snap]\nenabled = false\nradius = 16\n").unwrap();
+        let settings = config.resolve_snap().unwrap();
+        assert!(!settings.enabled);
+        assert_eq!(settings.radius, 16);
+        assert!(toml::from_str::<Config>("[snap]\nradius_px = 4\n").is_err());
+    }
+
+    #[test]
+    fn an_absent_snap_table_is_the_default_not_an_error() {
+        let config: Config = toml::from_str("[style]\nthickness = 3\n").unwrap();
+        assert_eq!(config.snap, SnapConfig::default());
     }
 }

@@ -257,6 +257,7 @@ fn run_resume(args: &cli::Cli, path: &std::path::Path, out: Option<PathBuf>) -> 
     });
     let measures = pixelcoords_core::session::restore_measures(&session);
     app.restore_session(selections, measures, previous, in_place);
+    app.set_snap(config.resolve_snap()?);
     app.restore_panel(state::load_panel());
     app.run()
 }
@@ -1342,6 +1343,7 @@ fn run_overlay_picked(args: &cli::Cli) -> Result<()> {
         capture: Some(pixelcoords_core::session::CaptureKind::Pick),
         name: args.name.clone(),
     });
+    app.set_snap(config.resolve_snap()?);
     app.restore_panel(state::load_panel());
     app.run()
 }
@@ -1425,6 +1427,7 @@ fn run_overlay(args: &cli::Cli) -> Result<()> {
         capture: Some(capture),
         name: args.name.clone(),
     });
+    app.set_snap(config.resolve_snap()?);
     app.restore_panel(state::load_panel());
     app.run()
 }
@@ -1650,6 +1653,21 @@ fn load_config(explicit: Option<&std::path::Path>) -> Result<Config> {
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let config: Config =
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    // Range-check here, not at each use, so `doctor --config` refuses the
+    // same values a launch would. A file that only fails once you reach
+    // the feature it configures is a file that looks valid until it
+    // matters.
+    if let Some(bad) = [
+        config.resolve_style().err(),
+        config.resolve_snap().err(),
+        config.resolve_monitors().err(),
+    ]
+    .into_iter()
+    .flatten()
+    .next()
+    {
+        return Err(anyhow::Error::new(bad)).with_context(|| format!("in {}", path.display()));
+    }
     log::info!("loaded config from {}", path.display());
     Ok(config)
 }
@@ -2137,6 +2155,24 @@ mod tests {
         assert_eq!(json["windows"][0]["title"], "front");
         assert_eq!(json["windows"][1]["size"]["w"], 70);
         assert_eq!(json["windows"][0]["origin"]["y"], 2);
+    }
+
+    #[test]
+    fn a_snap_radius_out_of_range_fails_the_load_and_the_doctor() {
+        let path = std::env::temp_dir().join("pixelcoords-test-snap-radius.toml");
+        std::fs::write(&path, "[snap]\nradius = 0\n").unwrap();
+
+        let err = load_config(Some(&path)).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("radius 0"), "got: {message}");
+
+        // The doctor sees the same refusal rather than reporting a file
+        // that would fail the moment snapping was used.
+        let mut healthy = true;
+        let json = super::config_json(Some(&path), &mut healthy);
+        assert_eq!(json["status"], "invalid");
+        assert!(!healthy);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

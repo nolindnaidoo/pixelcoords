@@ -53,6 +53,47 @@ same message `--monitor` gives, rather than falling back to freezing
 everything. `pixelcoords doctor --config` reports the shape errors without
 launching.
 
+## Snapping
+
+The point you are placing is pulled onto UI edges detected in the frozen
+screenshot, so a rect drawn around a button lands on the button rather
+than four pixels off it.
+
+```toml
+[snap]
+enabled = true   # the default
+radius = 8       # logical px, 1-64
+```
+
+`radius` is in **logical** pixels and scaled per monitor, so the reach
+under your hand is the same on a Retina panel and a 1x one. A value
+outside `1-64` is a config error: zero would be a silently disabled
+feature and a huge one would drag the pointer across half the screen, and
+neither is more likely to be intended than typed.
+
+`X` toggles snapping for the rest of a run, with the control panel's `X`
+row showing the live state. The toggle deliberately does not persist —
+this file owns the default.
+
+**What snaps:** the point you are actively placing. Drawing a shape snaps
+both the press and the release, resizing snaps the dragged handle, and a
+measure ruler snaps each endpoint. **What does not:** arrow-key nudging,
+ever. Arrows mean exactly one pixel, and a feature that quietly overrode
+them would make the one exact tool in the overlay inexact. A freehand
+stroke is not snapped either — a path of snapped points is a jagged path.
+
+Detection is pixels only — a luma gradient, no accessibility tree and no
+toolkit introspection — so it works the same on a native app, a game, and
+a screenshot of either. The threshold adapts to each frame rather than
+being an absolute number, because a cut that finds edges on a light theme
+finds nothing on a dark one. Below the floor nothing is offered: a subtle
+background gradient is not an edge, and snapping to one would be worse
+than not snapping.
+
+When a snap happens the overlay draws the edge that captured the point,
+along its detected extent. Seeing *what* you snapped to is the difference
+between trusting the placement and wondering why the cursor moved.
+
 ## Style
 
 ```toml

@@ -3,16 +3,19 @@
 //! happens in capture space via the core crate. One overlay window per
 //! captured monitor; selections are tagged with their monitor index.
 
+use std::cell::OnceCell;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use image::RgbaImage;
-use pixelcoords_core::config::Style;
+use pixelcoords_core::config::{SnapSettings, Style};
 use pixelcoords_core::geometry::{Line, Point, Rect, ResizeHandle, Shape, Size, ToolKind};
 use pixelcoords_core::hotkeys::{Action, Binding, Edge, KeyName, OverlayState, match_event};
+use pixelcoords_core::locate::GrayImage;
 use pixelcoords_core::selection::{GrabKind, Measure, MeasureGrab, Selection, SelectionSet};
 use pixelcoords_core::session::TargetRecord;
+use pixelcoords_core::snap::{EdgeMap, Snap};
 use pixelcoords_core::strings::{EN, Strings};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseButton, StartCause, WindowEvent};
@@ -45,6 +48,12 @@ pub struct MonitorFrame {
     /// obvious.
     draw_rect: pixelcoords_core::geometry::Rect,
     ui_scale: i32,
+    /// Detected edges, built on first use. Lazy because a run with
+    /// snapping off should not pay ~30ms and ~12MB per monitor for a map
+    /// nobody queries; `App::new` warms it when the config says snapping
+    /// starts on, so the cost lands during startup rather than as a hitch
+    /// on the first mouse move.
+    edges: OnceCell<EdgeMap>,
 }
 
 impl MonitorFrame {
@@ -60,7 +69,19 @@ impl MonitorFrame {
             size,
             draw_rect,
             ui_scale,
+            edges: OnceCell::new(),
         }
+    }
+
+    /// This frame's edge map, detecting on first call.
+    pub fn edges(&self) -> &EdgeMap {
+        self.edges.get_or_init(|| {
+            EdgeMap::new(&GrayImage::from_rgba(
+                self.size.w.max(0) as usize,
+                self.size.h.max(0) as usize,
+                self.rgba.as_raw(),
+            ))
+        })
     }
 
     /// Restrict drawing to `rect` within this frame. Clamped to the frame
@@ -200,6 +221,17 @@ pub struct App {
     /// per event. Latched like the view's size-mismatch warning: report the
     /// first, stay quiet until a frame succeeds again.
     warned_render_failure: bool,
+    /// Resolved config; `enabled` is the live state, flipped by the
+    /// toggle key and deliberately not persisted.
+    snap: SnapSettings,
+    /// What the in-flight gesture snapped to, kept so the overlay can
+    /// draw the edge that captured the point. Cleared on release.
+    snap_hit: Snap,
+    /// `cursor` with `snap_hit` applied — the point every gesture builds
+    /// from. Held as state rather than recomputed at each use so one
+    /// gesture step cannot snap twice and disagree with itself, and so
+    /// the guides drawn always match the geometry committed.
+    gesture_cursor: Point,
 }
 
 impl App {
@@ -244,7 +276,52 @@ impl App {
             caret_deadline: None,
             error: None,
             warned_render_failure: false,
+            snap: SnapSettings::default(),
+            snap_hit: Snap::default(),
+            gesture_cursor: Point::new(0, 0),
         }
+    }
+
+    /// Adopt resolved snapping settings, warming each frame's edge map
+    /// when snapping starts on so detection does not stall the first
+    /// mouse move.
+    pub fn set_snap(&mut self, settings: SnapSettings) {
+        self.snap = settings;
+        if settings.enabled {
+            for frame in &self.frames {
+                let _ = frame.edges();
+            }
+        }
+    }
+
+    /// The snap radius on the frame under the cursor. Config gives it in
+    /// logical pixels; a 2x display needs twice as many physical ones for
+    /// the same reach under the hand.
+    fn snap_radius(&self) -> i32 {
+        if self.snap.enabled {
+            self.snap.radius * self.frames[self.cursor_frame].ui_scale
+        } else {
+            0
+        }
+    }
+
+    /// Where the cursor wants to be, recording what captured it.
+    ///
+    /// Called at the start of each gesture step rather than folded into
+    /// `cursor_moved`, because the *idle* cursor must stay exact: the
+    /// readout, the loupe, and hit-testing all report where the pointer
+    /// actually is, and a hovering cursor that jumps to nearby edges
+    /// would make the whole overlay feel broken.
+    fn snap_cursor(&mut self) -> Point {
+        let radius = self.snap_radius();
+        if radius <= 0 {
+            self.snap_hit = Snap::default();
+            return self.cursor;
+        }
+        self.snap_hit = self.frames[self.cursor_frame]
+            .edges()
+            .snap(self.cursor, radius);
+        self.snap_hit.apply(self.cursor)
     }
 
     /// Set the provenance stamped into every save.
@@ -350,7 +427,7 @@ impl App {
             Mode::Drawing { frame, start, .. }
                 if frame == frame_idx && self.tool == ToolKind::Measure =>
             {
-                let line = Line::new(start, self.cursor);
+                let line = Line::new(start, self.gesture_cursor);
                 // Shift constrains to horizontal, vertical, or 45 —
                 // the same grammar the other tools give Shift.
                 Some(if self.shift_down {
@@ -379,8 +456,12 @@ impl App {
                 // polygon outside it.
                 let region = self.frames[frame_idx].draw_rect;
                 let vertex = Point::new(
-                    self.cursor.x.clamp(region.x, region.x + region.w - 1),
-                    self.cursor.y.clamp(region.y, region.y + region.h - 1),
+                    self.gesture_cursor
+                        .x
+                        .clamp(region.x, region.x + region.w - 1),
+                    self.gesture_cursor
+                        .y
+                        .clamp(region.y, region.y + region.h - 1),
                 );
                 Some(pixelcoords_core::geometry::regular_polygon(
                     *start,
@@ -395,7 +476,7 @@ impl App {
             _ => Shape::compute_preview(
                 self.tool,
                 *start,
-                self.cursor,
+                self.gesture_cursor,
                 self.frames[frame_idx].draw_rect,
                 self.shift_down,
             ),
@@ -458,6 +539,12 @@ impl App {
             editing,
             measure_editing,
             measure_preview,
+            snap_enabled: self.snap.enabled,
+            snap: if frame_idx == self.cursor_frame {
+                self.snap_hit
+            } else {
+                Snap::default()
+            },
             flash,
             strings: self.strings,
             style,
@@ -542,6 +629,10 @@ impl App {
         if matches!(self.mode, Mode::SessionNaming { .. }) {
             self.commit_session_name();
         }
+        // A drag's *first* point matters as much as its last: without
+        // this the rect's origin lands wherever the click did and only
+        // the opposite corner snaps, which is half a feature.
+        self.gesture_cursor = self.snap_cursor();
         // The measure tool owns the pointer while it is active: a press
         // grabs an existing ruler's endpoint or body, and otherwise
         // starts a new one. Shapes are not grabbable in this mode, so a
@@ -574,7 +665,7 @@ impl App {
             }
             self.mode = Mode::Drawing {
                 frame: self.cursor_frame,
-                start: self.cursor,
+                start: self.gesture_cursor,
                 path: Vec::new(),
             };
             self.redraw_all();
@@ -626,8 +717,8 @@ impl App {
                 }
                 self.mode = Mode::Drawing {
                     frame: self.cursor_frame,
-                    start: self.cursor,
-                    path: vec![self.cursor],
+                    start: self.gesture_cursor,
+                    path: vec![self.gesture_cursor],
                 };
             }
         }
@@ -635,10 +726,14 @@ impl App {
     }
 
     fn mouse_released(&mut self) {
+        // A release is allowed to be the first event at its position —
+        // no move need have been delivered there — so the commit point is
+        // resolved here rather than trusted from the last move.
+        self.refresh_gesture_cursor();
         let preview = self.preview_for(self.cursor_frame);
         match std::mem::replace(&mut self.mode, Mode::Idle) {
             Mode::Drawing { frame, start, .. } if self.tool == ToolKind::Measure => {
-                let line = Line::new(start, self.cursor);
+                let line = Line::new(start, self.gesture_cursor);
                 let line = if self.shift_down {
                     line.constrained()
                 } else {
@@ -762,10 +857,15 @@ impl App {
         frame: usize,
     ) -> Line {
         let MeasureGrab::Endpoint(is_a) = grab else {
-            let target = Point::new(self.cursor.x - grab_offset.x, self.cursor.y - grab_offset.y);
+            let target = Point::new(
+                self.gesture_cursor.x - grab_offset.x,
+                self.gesture_cursor.y - grab_offset.y,
+            );
             return original.translated(target.x - original.a.x, target.y - original.a.y);
         };
-        let free = self.frames[frame].draw_rect().clamp_point(self.cursor);
+        let free = self.frames[frame]
+            .draw_rect()
+            .clamp_point(self.gesture_cursor);
         let dragged = if is_a {
             Line::new(free, original.b)
         } else {
@@ -785,10 +885,30 @@ impl App {
         }
     }
 
+    /// Bring `gesture_cursor` and `snap_hit` up to date with the pointer.
+    ///
+    /// Every gesture step wants the snapped point, and computing it in
+    /// one place keeps `snap_hit` in step with what the gesture actually
+    /// used — the overlay draws that edge, so a second computation could
+    /// draw a guide the committed geometry never touched. Idle clears
+    /// instead: a hovering cursor must stay exact, or the readout, the
+    /// loupe, and hit-testing all start lying.
+    fn refresh_gesture_cursor(&mut self) {
+        if matches!(
+            self.mode,
+            Mode::Idle | Mode::LabelEditing { .. } | Mode::SessionNaming { .. }
+        ) {
+            self.snap_hit = Snap::default();
+        } else {
+            self.gesture_cursor = self.snap_cursor();
+        }
+    }
+
     /// Advance whatever gesture is in flight to `self.cursor`. Split from
     /// `cursor_moved` so headless tests can drive a drag by setting the
     /// cursor, without a window to convert positions from.
     fn update_active_gesture(&mut self) {
+        self.refresh_gesture_cursor();
         match &mut self.mode {
             Mode::Drawing { frame, path, .. } => {
                 let frame = *frame;
@@ -821,7 +941,7 @@ impl App {
                 let moved = original.clamp_move_rotated(
                     rot,
                     grab_offset,
-                    self.cursor,
+                    self.gesture_cursor,
                     self.frames[frame].draw_rect(),
                 );
                 self.selections.set_shape_live(index, moved);
@@ -841,7 +961,7 @@ impl App {
                 let resized = original.resize_to_rotated(
                     rot,
                     handle,
-                    self.cursor,
+                    self.gesture_cursor,
                     self.frames[frame].draw_rect(),
                     self.shift_down,
                 );
@@ -1328,6 +1448,23 @@ impl App {
                 self.caret_deadline = Some(Instant::now() + CARET_BLINK);
                 self.redraw_all();
             }
+            Action::ToggleSnap => {
+                self.snap.enabled = !self.snap.enabled;
+                if self.snap.enabled {
+                    for frame in &self.frames {
+                        let _ = frame.edges();
+                    }
+                } else {
+                    self.snap_hit = Snap::default();
+                }
+                let message = if self.snap.enabled {
+                    self.strings.hud_snap_on
+                } else {
+                    self.strings.hud_snap_off
+                };
+                self.set_flash(message.to_string(), FLASH_TOOL);
+                self.redraw_all();
+            }
             Action::TogglePanel => {
                 self.panel_hidden = !self.panel_hidden;
                 if self.panel_hidden {
@@ -1781,6 +1918,36 @@ mod tests {
         )
     }
 
+    /// One fake monitor showing a light button on a dark field, so edge
+    /// detection has something real to find. The button spans x 20..60
+    /// and y 15..45, making its boundaries 20/60 and 15/45.
+    fn test_app_with_button() -> App {
+        let info = MonitorInfo {
+            index: 0,
+            name: "Fake".into(),
+            primary: true,
+            origin: Point::new(0, 0),
+            size_native: Size::new(100, 60),
+            scale: 1.0,
+        };
+        let mut rgba = RgbaImage::from_pixel(100, 60, image::Rgba([20, 20, 20, 255]));
+        for y in 15..45 {
+            for x in 20..60 {
+                rgba.put_pixel(x, y, image::Rgba([230, 230, 230, 255]));
+            }
+        }
+        let mut app = App::new(
+            vec![MonitorFrame::new(info, rgba)],
+            Config::default().resolve_style().unwrap(),
+            default_bindings(),
+            std::env::temp_dir().join("pixelcoords-app-test-unused"),
+            None,
+            Presentation::Fullscreen,
+        );
+        app.set_snap(Config::default().resolve_snap().unwrap());
+        app
+    }
+
     /// Three frames, so a release from the middle has both a frame below
     /// it (index unchanged) and one above it (index must shift down).
     fn test_app_multi() -> App {
@@ -1943,6 +2110,91 @@ mod tests {
     }
 
     #[test]
+    fn a_drag_near_a_button_snaps_both_corners_onto_its_edges() {
+        let mut app = test_app_with_button();
+        // Start and end a few pixels off on every axis.
+        app.cursor = Point::new(23, 18);
+        app.mouse_pressed();
+        app.cursor = Point::new(57, 42);
+        app.update_active_gesture();
+        app.mouse_released();
+
+        assert_eq!(
+            app.selections.items()[0].shape,
+            rect(20, 15, 40, 30),
+            "the rect is the button's true size, not four pixels short"
+        );
+    }
+
+    #[test]
+    fn snapping_turned_off_leaves_the_drag_exactly_where_it_was() {
+        let mut app = test_app_with_button();
+        app.apply_local_action(Action::ToggleSnap);
+        assert!(!app.snap.enabled);
+
+        app.cursor = Point::new(23, 18);
+        app.mouse_pressed();
+        app.cursor = Point::new(57, 42);
+        app.update_active_gesture();
+        app.mouse_released();
+
+        assert_eq!(app.selections.items()[0].shape, rect(23, 18, 34, 24));
+    }
+
+    #[test]
+    fn the_toggle_flips_back_and_says_so() {
+        let mut app = test_app_with_button();
+        app.apply_local_action(Action::ToggleSnap);
+        assert_eq!(
+            app.flash.as_ref().map(|(m, _)| m.as_str()),
+            Some("SNAP OFF")
+        );
+        app.apply_local_action(Action::ToggleSnap);
+        assert!(app.snap.enabled);
+        assert_eq!(app.flash.as_ref().map(|(m, _)| m.as_str()), Some("SNAP ON"));
+    }
+
+    #[test]
+    fn nudging_beside_an_edge_still_moves_exactly_one_pixel() {
+        let mut app = test_app_with_button();
+        // Parked one pixel inside the button's left boundary: a snap
+        // would pull it back, and the arrow keys' whole contract is that
+        // they do not.
+        app.selections.add(Selection::new(rect(21, 30, 10, 6), 0));
+        app.cursor = Point::new(25, 33);
+
+        app.nudge(1, 0);
+
+        assert_eq!(app.selections.items()[0].shape, rect(22, 30, 10, 6));
+    }
+
+    #[test]
+    fn an_idle_cursor_never_snaps() {
+        let mut app = test_app_with_button();
+        app.cursor = Point::new(23, 18);
+        app.update_active_gesture();
+        assert_eq!(app.snap_hit, Snap::default(), "nothing is in flight");
+    }
+
+    #[test]
+    fn a_measure_endpoint_snaps_to_the_edge_under_it() {
+        let mut app = test_app_with_button();
+        app.tool = ToolKind::Measure;
+        app.cursor = Point::new(23, 30);
+        app.mouse_pressed();
+        app.cursor = Point::new(57, 30);
+        app.update_active_gesture();
+        app.mouse_released();
+
+        assert_eq!(
+            app.selections.measures()[0].line,
+            Line::new(Point::new(20, 30), Point::new(60, 30)),
+            "the ruler measures the button's real width"
+        );
+        assert!((app.selections.measures()[0].line.length() - 40.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
     fn draw_gesture_commits_and_dirties() {
         let mut app = test_app();
         app.cursor = Point::new(10, 10);
@@ -1964,6 +2216,7 @@ mod tests {
         app.mouse_pressed();
         assert!(matches!(app.mode, Mode::Drawing { .. }));
         app.cursor = Point::new(40, 50);
+        app.update_active_gesture();
         assert_eq!(
             app.measure_preview(0),
             Some(Line::new(Point::new(10, 10), Point::new(40, 50)))
@@ -2247,6 +2500,7 @@ mod tests {
             path: vec![Point::new(50, 40)],
         };
         app.cursor = Point::new(70, 55);
+        app.update_active_gesture();
         assert_eq!(app.preview_for(0), Some(rect(50, 40, 20, 15)));
         assert_eq!(app.preview_for(1), None, "preview is frame-local");
     }

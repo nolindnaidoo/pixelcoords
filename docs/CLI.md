@@ -85,6 +85,7 @@ regardless.
 |-------|--------|
 | Drag | Draw the current shape; release commits, `Esc` cancels |
 | Drag inside / edge | Move / resize (`Shift` locks ratio) |
+| Snapping | On by default: the point you are placing lands on UI edges detected in the frozen image. `X` toggles it; arrow-key nudging is never snapped. See [CONFIGURATION.md](CONFIGURATION.md#snapping) |
 | `Q` / `E` | Rotate 1° per press, held repeats, `Shift` steps 15° |
 | `W` / `Tab` | Cycle tool: rect, ellipse, triangle, polygon, freehand, measure |
 | `3`–`9` | Polygon tool: side count |
@@ -98,6 +99,7 @@ regardless.
 | Arrows | Nudge 1px (`Shift` 10px, `Alt` resizes) |
 | `M` (hold) | Magnifier loupe, with the center pixel's hex under it |
 | `N` | Name the session |
+| `X` | Toggle edge snapping (panel shows the state; the config owns the default) |
 | `R` | Release the monitor under the cursor: unfreeze that display and close its window, leaving the others frozen. Refused while it still holds marks |
 | `Space` (hold) | Move the control panel (position persists) |
 | `H` | Hide / show the control panel |

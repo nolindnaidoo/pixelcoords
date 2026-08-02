@@ -10,8 +10,8 @@ If a pull request follows this document, review is fast.
 Cross-platform screen coordinate picker. v1 is **snapshot mode**: capture a
 frozen screenshot per monitor → fullscreen overlay showing it → draw
 rectangle, ellipse, triangle, polygon, and freehand selections (move,
-resize, rotate, label) plus measure rulers → save JSON coordinates + PNG
-crops. This model is the only one that works on
+resize, rotate, label) plus measure rulers, with marks snapping to edges
+detected in the frozen image → save JSON coordinates + PNG crops. This model is the only one that works on
 Wayland, so it is the base for every platform. "Live mode" (a transparent
 overlay over a live app) is a possible later addition for Windows/macOS/X11
 — do not build toward it prematurely.
