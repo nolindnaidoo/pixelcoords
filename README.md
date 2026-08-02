@@ -194,6 +194,12 @@ Knowing what a tool is means knowing what it isn't. These are settled:
   threat model and a different tool; see
   [pixelactions](https://github.com/nolindnaidoo/pixelactions) above.
 
+What it also doesn't do is decide how much of your machine you may spend.
+Undo history, selection count, and session size are unbounded on purpose,
+and the few ceilings that exist say what they cost —
+[Limits and resources](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CONFIGURATION.md#limits-and-resources)
+lists both.
+
 ## Documentation
 
 - [pixelcoords.dev](https://pixelcoords.dev) — the website: demo, comparisons, how-to

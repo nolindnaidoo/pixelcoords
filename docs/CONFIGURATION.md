@@ -162,6 +162,46 @@ no-ops.
 edit in progress (never quits), `Enter` commits a label, `Backspace`
 deletes while labeling.
 
+## Limits and resources
+
+Two lists, and the second is the more useful one.
+
+### What is deliberately unbounded
+
+These grow with what you do, and nothing stops them. That is a decision,
+not an oversight — a wall you hit mid-session is worse than memory you
+chose to spend, and none of these has a natural number to stop at.
+
+- **Undo history.** Every edit is kept for the life of the session, and a
+  freehand stroke's undo entry carries its whole point list. A long
+  session with hundreds of edits holds all of them in memory. Nothing
+  truncates.
+- **Selections and measures per session.** No cap. Each selection also
+  writes a crop on save, so a hundred marks means a hundred PNGs.
+- **Session and capture size.** One frozen frame per monitor is held for
+  the life of the overlay, at that monitor's full physical resolution. On
+  a 6K display that is around 100 MB before anything is drawn.
+
+If you work at a scale where this matters, it is yours to manage — quit
+and reopen for a fresh session, or split the work across sessions. The
+tool will not decide for you.
+
+### What has a ceiling, and why
+
+Each of these refuses out-of-range values loudly, naming the field. The
+numbers are current defaults rather than permanent truths.
+
+| Setting | Ceiling | The reason behind the number |
+|---|---|---|
+| `[snap] radius` | 64 logical px | Scoring is O(radius²) — about 15µs per query at radius 16 on a 3600×2338 frame. Past roughly 100 the pointer visibly lags, so this is a cost curve, not a preference |
+| `[style] thickness` | 512 px | Nothing breaks above it; the bound exists to catch a typo in a value you are already setting by hand |
+| Label length | 64 characters | A label becomes part of a crop's filename, and most filesystems stop at 255 bytes. Enforced when you type and when a session is read |
+| Polygon sides | 1000 | Past a few hundred at any real screen size the vertices land on the same pixels. Some ceiling has to exist because the count is a per-vertex allocation. The overlay reaches 3–9, which is the digit keys' reach rather than the shape's limit |
+
+A cap you hit is a bug report; a cost you chose is a feature. Where a
+number above is a genuine cost, it is stated so you can decide. Where it
+is only typo protection, it says that too.
+
 ## UI state
 
 Where you park the control panel (hold `Space`) survives between runs
