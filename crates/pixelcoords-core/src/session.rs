@@ -15,16 +15,7 @@ use crate::selection::Selection;
 pub const SCHEMA_VERSION: u32 = 1;
 pub const APP_NAME: &str = "pixelcoords";
 
-/// The largest absolute value any coordinate or extent in a session may
-/// carry.
-///
-/// A million pixels is more than an order of magnitude beyond the widest
-/// desktop anyone assembles, and small enough that every difference,
-/// sum, and product the geometry performs stays far from an integer
-/// limit. Both properties matter: the first means no real session is
-/// ever refused, the second means a session that passes this check
-/// cannot make the arithmetic downstream overflow.
-pub const MAX_COORD: i32 = 1_000_000;
+pub use crate::geometry::MAX_COORD;
 
 /// Why a session file is not usable, even though it parsed.
 ///

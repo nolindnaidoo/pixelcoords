@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a7ce66f912af2c65a7226b007ab1cf25c7d20f74cfd0f45946eaaa84557e32a6 # shrinks to a = Point { x: 2147483647, y: 0 }, b = Point { x: 0, y: 2147483647 }, p = Point { x: -2147483648, y: 0 }, tolerance = 0
+cc 4eb8daf6186009daa6dc0096dc36901ffbc09161463ff05f11ef1ff05d796297 # shrinks to center = Point { x: -2147483648, y: 0 }, toward = Point { x: 0, y: 0 }, sides = 0, tool = Rect, bounds = Size { w: 1, h: 1 }, shift = false, path = []
+cc 429e03b1b185b1c834b7660619413c52b246a7ef1dc383d8ac754681027e6106 # shrinks to s = Rect(Rect { x: 0, y: 0, w: 0, h: 0 }), grab = Point { x: 0, y: 0 }, cursor = Point { x: 0, y: 0 }, region = Rect { x: 0, y: 1186003959, w: 1, h: 961479689 }, h = RectEdges { left: false, right: false, top: false, bottom: false }, deg = 0, lock = false
