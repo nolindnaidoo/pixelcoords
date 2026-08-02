@@ -11,7 +11,7 @@ backend, and `#![forbid(unsafe_code)]`.
 
 ```toml
 [dependencies]
-pixelcoords-core = "0.5"
+pixelcoords-core = "0.6"
 ```
 
 ## What you'd use it for
@@ -93,7 +93,7 @@ for selection in &session.selections {
 #
 # const EXAMPLE_SESSION: &str = r#"{
 #   "schema": 1,
-#   "app": { "name": "pixelcoords", "version": "0.5.3" },
+#   "app": { "name": "pixelcoords", "version": "0.6.0" },
 #   "created_utc": "2026-07-29T00:00:00Z",
 #   "monitors": [
 #     { "index": 0, "name": "Built-in", "primary": true,
@@ -207,7 +207,7 @@ assert_eq!(miss.nearest.expect("a nearest region").region.label, "submit");
 #
 # const EXAMPLE_SESSION: &str = r#"{
 #   "schema": 1,
-#   "app": { "name": "pixelcoords", "version": "0.5.3" },
+#   "app": { "name": "pixelcoords", "version": "0.6.0" },
 #   "created_utc": "2026-07-29T00:00:00Z",
 #   "monitors": [
 #     { "index": 0, "name": "Built-in", "primary": true,
@@ -242,7 +242,7 @@ assert!(snippet.contains("pyautogui"));
 #
 # const EXAMPLE_SESSION: &str = r#"{
 #   "schema": 1,
-#   "app": { "name": "pixelcoords", "version": "0.5.3" },
+#   "app": { "name": "pixelcoords", "version": "0.6.0" },
 #   "created_utc": "2026-07-29T00:00:00Z",
 #   "monitors": [
 #     { "index": 0, "name": "Built-in", "primary": true,

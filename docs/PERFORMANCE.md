@@ -18,6 +18,12 @@ a machine attached is not a measurement.
 | Version | pixelcoords 0.5.3 |
 | Taken | 2026-08-02 |
 
+The version is when these were *taken*, not the last version they
+describe. 0.6.0 changed configuration plumbing and removed two unused
+functions; it touched none of the paths measured below, so re-running
+would only re-measure the run-to-run noise. Re-run it yourself if you
+want numbers for your own machine — that is what the harnesses are for.
+
 Reproduce with:
 
 ```bash
