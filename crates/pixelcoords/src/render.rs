@@ -382,20 +382,21 @@ fn draw_snap_guides(canvas: &mut Canvas, state: &FrameState) {
     if state.cursor.is_none() {
         return;
     }
+    let weight = state.style.thickness.clamp(1, 2);
     if let Some(hit) = state.snap.x {
         let (lo, hi) = hit.span;
-        canvas.draw_line(
+        canvas.draw_segment(
             Line::new(Point::new(hit.at, lo), Point::new(hit.at, hi)),
             state.style.label,
-            1,
+            weight,
         );
     }
     if let Some(hit) = state.snap.y {
         let (lo, hi) = hit.span;
-        canvas.draw_line(
+        canvas.draw_segment(
             Line::new(Point::new(lo, hit.at), Point::new(hi, hit.at)),
             state.style.label,
-            1,
+            weight,
         );
     }
 }
