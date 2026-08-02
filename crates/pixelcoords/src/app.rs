@@ -1219,29 +1219,25 @@ impl App {
             return;
         }
         self.shift_down = shift;
-        let Mode::Resizing {
-            frame,
-            index,
-            handle,
-            original,
-        } = &self.mode
-        else {
-            return;
-        };
-        let (frame, index, handle, original) = (*frame, *index, *handle, original.clone());
-        let Some(rot) = self.selections.get(index).map(|s| s.rot_deg) else {
-            self.mode = Mode::Idle;
-            return;
-        };
-        let resized = original.resize_to_rotated(
-            rot,
-            handle,
-            self.cursor,
-            self.frames[frame].draw_rect(),
-            shift,
-        );
-        self.selections.set_shape_live(index, resized);
-        self.redraw_frame(frame);
+        // Every gesture that reads the modifier has to answer to it, not
+        // just resizing. A drag preview is derived at render time, so it
+        // only needs the repaint; a measure drag is held as live state and
+        // needs recomputing the way a resize does.
+        match &self.mode {
+            Mode::Drawing { frame, .. } => {
+                let frame = *frame;
+                self.redraw_frame(frame);
+            }
+            Mode::Resizing { frame, .. } | Mode::MeasureDragging { frame, .. } => {
+                let frame = *frame;
+                self.update_active_gesture();
+                self.redraw_frame(frame);
+            }
+            Mode::Idle
+            | Mode::Dragging { .. }
+            | Mode::LabelEditing { .. }
+            | Mode::SessionNaming { .. } => {}
+        }
     }
 
     /// Quit, unless there is unsaved work — then arm a second-press window
@@ -2536,6 +2532,164 @@ mod tests {
         release.pressed = false;
         release.repeat = true;
         assert_eq!(release.edge(), Edge::Release, "a release is a release");
+    }
+
+    #[test]
+    fn shift_circles_an_ellipse_preview_without_moving_the_cursor() {
+        // The ellipse is the drawing tool that reads the modifier — the
+        // rect preview ignores `lock` entirely, so this is the shape that
+        // can demonstrate the bug.
+        let mut app = test_app();
+        app.tool = ToolKind::Ellipse;
+        app.cursor = Point::new(10, 10);
+        app.mouse_pressed();
+        app.cursor = Point::new(60, 30);
+        app.update_active_gesture();
+        let Some(Shape::Ellipse { rx, ry, .. }) = app.preview_for(0) else {
+            panic!("drawing an ellipse")
+        };
+        assert_ne!(rx, ry, "an oval to start with");
+
+        // Shift alone, no mouse movement at all.
+        app.shift_changed(true);
+
+        assert!(app.shift_down);
+        let Some(Shape::Ellipse { rx, ry, .. }) = app.preview_for(0) else {
+            panic!("still drawing")
+        };
+        assert_eq!(rx, ry, "the lock must apply before the next mouse move");
+    }
+
+    #[test]
+    fn shift_snaps_a_measure_preview_without_moving_the_cursor() {
+        let mut app = test_app();
+        app.tool = ToolKind::Measure;
+        app.cursor = Point::new(10, 10);
+        app.mouse_pressed();
+        app.cursor = Point::new(60, 12);
+        app.update_active_gesture();
+        assert_eq!(
+            app.measure_preview(0),
+            Some(Line::new(Point::new(10, 10), Point::new(60, 12)))
+        );
+
+        app.shift_changed(true);
+
+        let snapped = app.measure_preview(0).expect("still drawing");
+        assert_eq!(snapped.b.y, 10, "45-degree snap flattened it: {snapped:?}");
+    }
+
+    #[test]
+    fn shift_reaims_a_dragged_measure_endpoint_without_moving_the_cursor() {
+        let mut app = test_app();
+        app.tool = ToolKind::Measure;
+        let line = Line::new(Point::new(10, 10), Point::new(60, 10));
+        app.selections.add_measure(Measure::new(line, 0));
+
+        // Grab endpoint b and drag it somewhere near-diagonal.
+        app.cursor = Point::new(60, 10);
+        app.mouse_pressed();
+        app.cursor = Point::new(50, 48);
+        app.update_active_gesture();
+        let free = app.selections.measures()[0].line;
+        assert_eq!(free.b, Point::new(50, 48));
+
+        app.shift_changed(true);
+
+        let snapped = app.selections.measures()[0].line;
+        assert_ne!(snapped.b, free.b, "the endpoint re-aimed on its own");
+        let (dx, dy) = snapped.delta();
+        assert_eq!(dx.abs(), dy.abs(), "snapped to 45 degrees: {snapped:?}");
+    }
+
+    #[test]
+    fn releasing_shift_undoes_the_constraint_just_as_readily() {
+        let mut app = test_app();
+        app.tool = ToolKind::Ellipse;
+        app.shift_down = true;
+        app.cursor = Point::new(10, 10);
+        app.mouse_pressed();
+        app.cursor = Point::new(60, 30);
+        app.update_active_gesture();
+        let Some(Shape::Ellipse { rx, ry, .. }) = app.preview_for(0) else {
+            panic!("drawing")
+        };
+        assert_eq!(rx, ry, "locked to a circle");
+
+        app.shift_changed(false);
+
+        let Some(Shape::Ellipse { rx, ry, .. }) = app.preview_for(0) else {
+            panic!("still drawing")
+        };
+        assert_ne!(rx, ry, "an oval again, without the cursor moving");
+    }
+
+    #[test]
+    fn shift_still_re_resizes_the_way_it_always_did() {
+        let mut app = test_app();
+        app.selections.add(Selection::new(rect(10, 10, 40, 20), 0));
+        app.cursor = Point::new(50, 30);
+        app.mouse_pressed();
+        assert!(
+            matches!(app.mode, Mode::Resizing { .. }),
+            "grabbed a corner"
+        );
+        // Drag to a shape that breaks the original 2:1 ratio, so locked
+        // and free cannot coincide.
+        app.cursor = Point::new(70, 80);
+        app.update_active_gesture();
+        let free = app.selections.items()[0].shape.clone();
+
+        app.shift_changed(true);
+
+        assert_ne!(
+            app.selections.items()[0].shape,
+            free,
+            "the ratio lock re-applied without the cursor moving"
+        );
+    }
+
+    #[test]
+    fn shift_while_idle_or_moving_changes_only_the_flag() {
+        let mut app = test_app();
+        app.selections.add(Selection::new(rect(10, 10, 40, 30), 0));
+        let before = app.selections.items()[0].shape.clone();
+
+        app.shift_changed(true);
+        assert!(app.shift_down);
+        assert_eq!(app.selections.items()[0].shape, before, "idle is untouched");
+
+        // A whole-shape move does not read the modifier, so it must not
+        // twitch when Shift is pressed mid-drag. Grab well inside, or the
+        // grab tolerance turns this into a resize.
+        app.cursor = Point::new(30, 20);
+        app.mouse_pressed();
+        assert!(matches!(app.mode, Mode::Dragging { .. }));
+        app.cursor = Point::new(38, 28);
+        app.update_active_gesture();
+        let moved = app.selections.items()[0].shape.clone();
+
+        app.shift_changed(false);
+
+        assert_eq!(
+            app.selections.items()[0].shape,
+            moved,
+            "the move is unaffected"
+        );
+    }
+
+    #[test]
+    fn repeating_the_same_shift_state_does_nothing() {
+        let mut app = test_app();
+        app.cursor = Point::new(10, 10);
+        app.mouse_pressed();
+        app.cursor = Point::new(60, 30);
+        app.update_active_gesture();
+        let before = app.preview_for(0);
+
+        app.shift_changed(false);
+
+        assert_eq!(app.preview_for(0), before);
     }
 
     #[test]
