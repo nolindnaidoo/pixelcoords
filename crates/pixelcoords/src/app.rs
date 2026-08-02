@@ -101,13 +101,22 @@ struct ViewSlot {
 }
 
 /// What a close request resolved to.
+///
+/// `Blocked` and `Busy` are both refusals and only differ in what the
+/// user is told; they are separate from `Quit` because conflating "there
+/// is nothing left to show" with "not right now" is how a refusal turns
+/// into an exit. That distinction used to live in a comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Release {
     /// The display is unfrozen and its window should go.
     Done,
     /// It still holds marks; nothing changed and the user was told.
     Blocked,
-    /// The last window, or a gesture in flight — end the run instead.
+    /// A gesture is in flight, so the indices a release would shift are
+    /// still being read. Refused, not fatal — let go of the mouse and try
+    /// again.
+    Busy,
+    /// The last window: there is nothing left to show, so end the run.
     Quit,
 }
 
@@ -1319,8 +1328,9 @@ impl App {
     /// index points into `frames`; the same reasoning as
     /// `allowed_mid_gesture`.
     fn release_frame(&mut self, event_loop: &ActiveEventLoop, frame: usize) {
-        if self.try_release_frame(frame) == Release::Quit {
-            self.request_quit(event_loop);
+        match self.try_release_frame(frame) {
+            Release::Quit => self.request_quit(event_loop),
+            Release::Done | Release::Blocked | Release::Busy => {}
         }
     }
 
@@ -1329,8 +1339,21 @@ impl App {
     /// than anywhere else in this file, because getting it wrong points a
     /// live index at the wrong display rather than crashing.
     fn try_release_frame(&mut self, frame: usize) -> Release {
-        if self.frames.len() <= 1 || !matches!(self.mode, Mode::Idle) {
+        if self.frames.len() <= 1 {
             return Release::Quit;
+        }
+        // A release renumbers every index into `frames`, and a gesture in
+        // flight is holding some of them. `allowed_mid_gesture` already
+        // stops the keyboard reaching here, but this must refuse on its
+        // own rather than rely on a gate in another function — if that
+        // gate ever loosens, the difference is between "not right now"
+        // and losing unsaved marks.
+        if !matches!(self.mode, Mode::Idle) {
+            self.set_flash(
+                self.strings.hud_release_busy.to_string(),
+                self.overlay.flash,
+            );
+            return Release::Busy;
         }
         let monitor = self.frames[frame].info.index;
         // Rulers count as marks: releasing a display they sit on would
@@ -2199,22 +2222,49 @@ mod tests {
     }
 
     #[test]
-    fn the_last_frame_quits_instead_of_releasing() {
-        let mut app = test_app();
-        assert_eq!(app.try_release_frame(0), Release::Quit);
-        assert_eq!(app.frames.len(), 1, "still frozen until the run ends");
-    }
-
-    #[test]
-    fn a_release_mid_gesture_quits_rather_than_pulling_the_frame_out() {
+    fn a_gesture_in_flight_refuses_the_release_rather_than_quitting() {
+        // This replaces a test that asserted the opposite. Quitting was
+        // the deliberate choice — better than pulling a frame out from
+        // under a gesture holding indices into it — but it was the wrong
+        // half of a false choice: refusing renumbers nothing *and* keeps
+        // the marks. Only `allowed_mid_gesture` stood between the old
+        // behavior and the R key.
         let mut app = test_app_multi();
         app.mode = Mode::Drawing {
             frame: 2,
             start: Point::new(1, 1),
             path: vec![Point::new(1, 1)],
         };
-        assert_eq!(app.try_release_frame(1), Release::Quit);
-        assert_eq!(app.frames.len(), 3);
+
+        assert_eq!(app.try_release_frame(1), Release::Busy);
+
+        assert_eq!(app.frames.len(), 3, "nothing was released");
+        assert!(
+            matches!(app.mode, Mode::Drawing { .. }),
+            "the gesture survives"
+        );
+        let flash = app
+            .flash
+            .as_ref()
+            .expect("the refusal is announced")
+            .0
+            .clone();
+        assert!(flash.to_lowercase().contains("drag"), "got: {flash}");
+    }
+
+    #[test]
+    fn busy_is_a_refusal_not_an_exit() {
+        // The whole point of splitting the variant: a caller can now tell
+        // these apart, and only one of them ends the run.
+        assert_ne!(Release::Busy, Release::Quit);
+        assert_ne!(Release::Blocked, Release::Quit);
+    }
+
+    #[test]
+    fn the_last_frame_quits_instead_of_releasing() {
+        let mut app = test_app();
+        assert_eq!(app.try_release_frame(0), Release::Quit);
+        assert_eq!(app.frames.len(), 1, "still frozen until the run ends");
     }
 
     #[test]

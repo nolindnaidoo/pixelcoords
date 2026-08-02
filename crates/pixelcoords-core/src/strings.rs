@@ -21,6 +21,8 @@ pub struct Strings {
     pub hud_release_blocked_suffix: &'static str,
     /// A window closed while others remain: that display is live again.
     pub hud_released: &'static str,
+    /// A release asked for mid-gesture. Refused rather than fatal.
+    pub hud_release_busy: &'static str,
     /// Edge snapping toggled on or off for the rest of the run.
     pub hud_snap_on: &'static str,
     pub hud_snap_off: &'static str,
@@ -60,6 +62,7 @@ pub const EN: Strings = Strings {
     hud_release_blocked_prefix: "Monitor holds ",
     hud_release_blocked_suffix: " selections - delete them first",
     hud_released: "Monitor released",
+    hud_release_busy: "Finish the drag first - then R releases the monitor",
     hud_snap_on: "SNAP ON",
     hud_snap_off: "SNAP OFF",
     hud_snap_row_key: "X",
