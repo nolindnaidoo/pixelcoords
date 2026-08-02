@@ -1,9 +1,12 @@
 # Contributing
 
 Thanks for your interest. pixelcoords runs verified on macOS, Windows,
-and Linux, but multi-monitor and fractional-scaling setups are still
-unverified on real hardware — so the most valuable contributions are
-bug reports from real machines and small, focused fixes.
+and Linux, but not every combination has met real hardware: fractional
+scaling is unverified everywhere, multi-monitor outside macOS is
+test-only, and the newest overlay work has only had a human run on
+macOS. The planned feature set is complete, so the most valuable
+contributions now are bug reports from real machines and small, focused
+fixes.
 
 ## Bug reports
 

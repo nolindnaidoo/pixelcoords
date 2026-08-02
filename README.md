@@ -36,12 +36,13 @@ different premise — **the real consumer of a coordinate is a machine.**
 It freezes your screen so nothing moves while you measure, then lets you
 mark regions with real shapes — rectangles, ellipses, triangles, N-gons,
 freehand — rotated, labeled, and placed to the exact pixel with a loupe
-and arrow-key nudging, plus rulers that report distance and angle
-between any two points. Marks snap to the UI edges already in the
-frozen image, so a rect around a button lands on the button. What you mark becomes data, not a picture:
-versioned JSON in physical pixels with per-monitor DPI scale, labeled
-crops and frame-sized cutouts, and ready-to-paste click code for your
-automation stack.
+and arrow-key nudging, plus rulers that report distance and angle between
+any two points. Marks snap to the UI edges already in the frozen image,
+so a rect around a button lands on the button. What you mark becomes
+data, not a picture: versioned JSON in physical pixels with per-monitor
+DPI scale, the color under each click point, labeled crops and
+frame-sized cutouts, and ready-to-paste click code for your automation
+stack.
 
 Then it answers the questions a machine actually asks about that data —
 each with an exit code and one JSON shape, so CI and computer-use agents
@@ -121,9 +122,10 @@ script would care — the complete reference with every flag is
 
 ## Controls
 
-Drag draws; the on-screen panel teaches everything else. The six that
-matter: `W` cycles the tool, `A` labels, `S` saves, `Z` undoes, hold `M`
-for a pixel loupe, `Esc` backs out / quits. Full table in
+Drag draws; the on-screen panel teaches everything else. The ones that
+matter: `W` cycles the tool, `A` labels, `S` saves, `Z` undoes, `X` turns
+edge snapping off when you want a placement left exactly where you put
+it, hold `M` for a pixel loupe, `Esc` backs out / quits. Full table in
 [docs/CLI.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CLI.md); every key is rebindable via
 [docs/CONFIGURATION.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CONFIGURATION.md).
 
@@ -136,13 +138,22 @@ for a pixel loupe, `Esc` backs out / quits. Full table in
 | Linux (X11) | Supported — verified by hand on GNOME 46; every feature works |
 | Linux (Wayland) | Screen coordinates + `--pick` window marking — verified by hand on GNOME 46; no `windows` / `--target` (the protocol withholds window geometry) |
 
-**Multi-monitor and mixed-DPI are now verified on real hardware**, on
-macOS: two displays at different scales (a 2x built-in and a 1x external
-sitting at a negative desktop origin), marks placed on both, and every
-coordinate recorded exactly where it was drawn. `find` relocated a region
-on the second display at a perfect score, and releasing one display left
-the other frozen and markable. Linux and Windows multi-monitor remain
-test-only. This table is kept honest — claims match runs.
+**Multi-monitor and mixed-DPI are verified on real hardware**, on macOS:
+two displays at different scales (a 2x built-in and a 1x external sitting
+at a negative desktop origin), marks placed on both, and every coordinate
+recorded exactly where it was drawn. `find` relocated a region on the
+second display at a perfect score, and releasing one display left the
+other frozen and markable. Linux and Windows multi-monitor remain
+test-only.
+
+Hand-verification is per platform *and* per release, so the table above
+is not a blanket claim. **macOS covers everything through 0.5.0**,
+including the color readout, the measure tool, and edge snapping.
+**Windows and Linux were verified by hand through 0.4.0**; 0.5.0's
+overlay additions pass CI on both but have not had a human run there. CI
+runs the full suite on all three platforms every push, and the overlay is
+the part tests cannot speak for. This table is kept honest — claims match
+runs.
 
 ## Acting on what you marked
 
