@@ -9,6 +9,27 @@ version number, for what changed under you.
 
 ## 0.5.3
 
+### The speed claims are measured now
+
+The README calls `resolve` instant and `CLI.md` says `--stdin` exists
+because a thousand `assert` processes pay a thousand session parses. Both
+were true and neither had ever been measured.
+[PERFORMANCE.md](docs/PERFORMANCE.md) carries the numbers, stamped with
+the machine and date they were taken on, plus the two harnesses that
+produce them — a core example and a `hyperfine` script. Neither is a test
+or a CI gate; a clock in CI is a flaky job.
+
+`resolve` is microseconds and `--stdin` is 43x per point, so both claims
+hold. The number nobody had is `locate`: a full-frame normalized
+cross-correlation is 196ms for a 160x90 crop against a 3024x1964 frame,
+which is what `find` and `wait --for match` pay per region per poll. That
+is worth knowing before setting `--interval`.
+
+The page also states plainly what the tool is not. These are lookups
+against regions somebody already marked, not open-world grounding, and it
+cites published results for the harder problem rather than pretending the
+comparison does not exist.
+
 ### A click point no longer scans the screen to find itself
 
 `click_point` answers "where would automation click this region", and for
