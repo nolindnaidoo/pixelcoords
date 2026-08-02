@@ -131,41 +131,32 @@ Versioning policy (also stated in [CHANGELOG.md](../CHANGELOG.md)):
 incrementing through 0.x, and the stability a release offers is whatever
 its CHANGELOG entry says it offers.
 
-### How releases are grouped
+### What a release is for, from 0.5.0 on
 
-By **what a release does to the contract**, not by theme, and hardest
-first:
+**The planned feature set is built.** 0.5.0 finished it, and the posture
+from here is stability, bug fixes, and staying compatible with what is
+already out there. Features still land when one is worth building, but
+they arrive because someone found a real need, not because a roadmap
+called for them.
+
+That changes what a release has to justify. Two things hold:
 
 - **The session schema does not move.** It has been version 1 since
-  0.1.0, and every planned feature is additive by construction — a new
-  optional field or a new optional top-level array, the same pattern
-  `platform`, `capture`, and `name` established. Old sessions keep
+  0.1.0, and anything added is additive by construction — an optional
+  field or an optional top-level array, the pattern `platform`,
+  `capture`, `color`, and `measures` all followed. Old sessions keep
   loading; old consumers ignore what they do not know.
-- **The CLI was the part that still moved**, so it went first. 0.4.0 was
-  the agent surface: a design pass settled the vocabulary the three new
-  commands (`resolve`, `wait`, `diff`) share — written down in
-  [The agent-surface contract](#the-agent-surface-contract) below — and
-  they landed on it, along with `assert --stdin` and the two breaks that
-  had to happen before anything was built against them. Grouping them
-  together was the point: three commands answering the same question
-  should not disagree about timeouts, `--label`, or exit codes, and
-  fixing that cost least before any of them existed. **That contract is
-  now the thing later releases are held to**, not a plan.
-- **0.5.0 was reach and polish together.** They were planned as two
-  releases — reach (new emit targets, external image input) then overlay
-  polish (color readout, the measure tool, edge snapping, localization) —
-  and collapsed into one because half of each was dropped rather than
-  built. External image input and localization were both cut as answering
-  questions nobody had asked; what remained was three emit targets and
-  three overlay features, which is one release, not two. Neither touches
-  the schema or the CLI contract, so grouping them cost nothing.
+- **The CLI answers do not move either.** The vocabulary the commands
+  share is written down in
+  [The agent-surface contract](#the-agent-surface-contract) below, and
+  that contract is now the thing releases are held to. Changing an answer
+  a caller already scripts against is the expensive kind of change, and
+  the bar for it is a bug, not a preference.
 
-A minor bump is cheap here, so nothing is held back for a number, and
-nothing is spent to reach one either: two plans becoming one release
-means one bump, not a skipped version. What is *not* cheap is changing
-an answer callers already script against — which is why the
-shared-vocabulary work is grouped ahead of the commands that would
-inherit its mistakes.
+A minor bump is cheap, so nothing is held back for a number and nothing
+is spent to reach one. A patch is for fixes; a minor is for a feature or
+a break. Which one a release is should be obvious from its CHANGELOG
+entry, and if it is not, the entry is the thing to fix.
 
 - Features land through issues → PRs (`Closes #N`), each writing its
   CHANGELOG entry under the upcoming version's heading in the same PR.
@@ -177,9 +168,8 @@ inherit its mistakes.
   docs checklist, which says "the upcoming version's heading" and stops
   there. A version written into prose is a copy of the milestone that
   nothing keeps in sync: it survives re-planning, and it survives the
-  release shipping without it. Ten of eleven open issues carried such a
-  copy once, one of them naming a version that had already shipped. Moving
-  an issue between releases must stay a one-click act.
+  release shipping without it. Moving an issue between releases must stay
+  a one-click act.
 - The release cut: one PR bumps the workspace version and the core dep
   pin. Then tag `v<X.Y.Z>` — the tag triggers
   `.github/workflows/release.yml`, which builds release binaries for

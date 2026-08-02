@@ -82,5 +82,8 @@ versioned, and `doctor`/`windows` speak `--json`. See
 **When Windows and Linux?** Both are done — verified on real hardware,
 not just CI. On Linux that means X11 with the full feature set and
 Wayland with everything Wayland permits (screen coordinates plus
-`--pick` window marking). Multi-monitor and fractional-scaling setups
-are unverified everywhere; the README's platform table is kept honest.
+`--pick` window marking). That hand-verification covers the feature set
+through 0.4.0; 0.5.0's overlay additions have run on real hardware on
+macOS only. Multi-monitor and mixed-DPI are verified on macOS and remain
+test-only elsewhere, and fractional scaling is unverified everywhere.
+The README's platform table is kept honest.
