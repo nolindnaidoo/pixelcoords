@@ -110,6 +110,34 @@ coordinates. Both fields are optional — sessions written before they
 existed simply lack them — and `resume` passes them through unchanged,
 so an edited file keeps saying where it was captured.
 
+## What makes a session valid
+
+Parsing proves the shape; these rules decide whether the values mean
+anything. They are checked once when a session is read, so every command
+and `doctor` refuse the same file, and a failure exits **2** naming the
+field and the value.
+
+- **`scale` must be finite and greater than zero.** It is a divisor —
+  every logical-point conversion goes through it. A zero scale used to
+  produce `inf`, which saturates to `2147483647` when it lands back in an
+  integer, and the tool would report that as a click point with `ok:
+  true`. A tool that answers confidently and wrongly is worse than one
+  that refuses.
+- **A monitor or target window cannot be empty.** Both dimensions must be
+  positive.
+- **Every coordinate and extent must be within ±1,000,000.** That is more
+  than an order of magnitude beyond the widest desktop anyone assembles,
+  so no real capture approaches it, and it is small enough that the
+  geometry cannot overflow on anything that passes. Beyond it the
+  arithmetic has no defined behavior, which is why the bound is enforced
+  at the door rather than checked in a hundred places behind it.
+
+The rules apply to the whole file — monitors, the target window,
+selections in all three coordinate spaces, and measures. Sessions
+pixelcoords writes always satisfy them; the checks exist because a
+session is a document you can edit, and an edited number should be
+refused rather than believed.
+
 ## Coordinate spaces
 
 All stored coordinates are **physical pixels** — the captured image's own

@@ -98,8 +98,12 @@ impl<T> Report<T> {
         }
     }
 
-    /// Record how much polling produced this answer. Only `wait` loops,
-    /// so only `wait` calls this.
+    /// Record how much polling produced this answer.
+    ///
+    /// Nothing calls this: `wait` sets `polls` and `elapsed_ms` on the
+    /// fields directly. Kept for now rather than removed mid-patch,
+    /// because dropping a public item from a published crate is a break
+    /// and belongs in a minor.
     #[must_use]
     pub fn polled(mut self, polls: u32, elapsed_ms: u64) -> Self {
         self.polls = Some(polls);
