@@ -37,26 +37,14 @@ fn point() -> impl Strategy<Value = Point> {
     (coord(), coord()).prop_map(|(x, y)| Point::new(x, y))
 }
 
-/// Polygon vertices live in a smaller range than everything else.
+/// Polygon vertices use the same range as everything else.
 ///
-/// Not because the arithmetic differs — it does not — but because
-/// `Poly::click_point` falls back to scanning its bounding box when the
-/// centroid lands outside the shape, so its cost grows with that box's
-/// *area*. At the edge of the domain a single case can run for minutes in
-/// a debug build and swamp the whole suite.
-///
-/// 10,000 is still past any real screen, so the coverage that matters is
-/// intact. The scan itself is filed separately.
-fn poly_coord() -> impl Strategy<Value = i32> {
-    prop_oneof![
-        3 => -10_000i32..=10_000,
-        1 => Just(10_000),
-        1 => Just(-10_000),
-    ]
-}
-
+/// They did not, for one release: `Poly::click_point` scanned its whole
+/// bounding box, so a single generated case at the edge of the domain
+/// took this suite from three seconds to over two hundred. The scan is
+/// gone, and this is the check that it stayed gone.
 fn poly_point() -> impl Strategy<Value = Point> {
-    (poly_coord(), poly_coord()).prop_map(|(x, y)| Point::new(x, y))
+    point()
 }
 
 fn shape() -> impl Strategy<Value = Shape> {

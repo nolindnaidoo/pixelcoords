@@ -7,6 +7,41 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
+## 0.5.3
+
+### A click point no longer scans the screen to find itself
+
+`click_point` answers "where would automation click this region", and for
+a concave shape — any freehand stroke that curves back on itself — the
+vertex average lands in the hollow rather than on the shape. The fallback
+was a raster scan of the whole bounding box, testing pixel after pixel
+until one landed inside: correct, and **O(width x height x vertices)**.
+
+It now cuts the shape with a horizontal line and takes the middle of the
+widest slice. Any horizontal line strictly inside a polygon's bounding
+box crosses its boundary an even number of times, so one line is normally
+enough; a few more are tried for degenerate rows where a line grazes a
+vertex.
+
+Measured on a chevron, worst case for the old scan:
+
+| Shape width | Before | After |
+|---|---|---|
+| 7,680 px | 252µs | 208ns |
+| 1,000,000 px | 24ms | 208ns |
+
+The cost no longer grows with the shape's size at all, only with its
+vertex count.
+
+**This can move a click point.** For a concave shape the returned point
+is still guaranteed inside, but it need not be the same pixel the scan
+would have found — the scan returned the first covered pixel in
+top-to-bottom order, and this returns the middle of a horizontal slice.
+Convex shapes, and any shape whose vertex average is already inside, are
+unaffected. If you recorded a click point from a concave freehand
+selection and compare it against a fresh `resolve`, expect a different —
+still interior — coordinate.
+
 ## 0.5.2
 
 ### Nothing happens silently

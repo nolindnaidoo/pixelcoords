@@ -718,10 +718,10 @@ fn on_segment(a: Point, b: Point, p: Point) -> bool {
         && p.y <= a.y.max(b.y)
 }
 
-/// A point guaranteed inside the polygon when any pixel is: the vertex
-/// average when it lands inside (cheap, common), else the first covered
-/// pixel of a bbox scan. Concave freehand shapes are exactly why the
-/// fallback exists.
+/// A point inside the polygon: the vertex average when it lands inside
+/// (cheap, and the common case), else the middle of the widest slice a
+/// horizontal cut makes. Concave freehand shapes are exactly why the
+/// fallback exists — a crescent's average sits in the hollow.
 fn poly_interior_point(points: &[Point]) -> Point {
     if points.is_empty() {
         return Point::new(0, 0);
@@ -733,18 +733,69 @@ fn poly_interior_point(points: &[Point]) -> Point {
     if point_in_poly(points, mean) {
         return mean;
     }
-    let shape = Shape::Poly {
+    let bb = Shape::Poly {
         points: points.to_vec(),
-    };
-    let bb = shape.bbox();
-    for y in bb.y..=bb.y.saturating_add(bb.h) {
-        for x in bb.x..=bb.x.saturating_add(bb.w) {
-            if point_in_poly(points, Point::new(x, y)) {
-                return Point::new(x, y);
-            }
+    }
+    .bbox();
+    // Cut the shape with a few horizontal lines and take the middle of
+    // the widest piece. Any horizontal line strictly inside the bounding
+    // box of a non-degenerate polygon crosses its boundary an even number
+    // of times, so one row is normally enough; the rest are there for
+    // degenerate rows, where a line grazes a vertex or runs along an
+    // edge.
+    //
+    // Eighths rather than a sweep because this replaced a scan of the
+    // whole bounding box. That scan was correct and O(width x height x
+    // vertices), which on a large shape is millions of point-in-polygon
+    // tests to answer a question a single line answers.
+    for eighth in [4, 2, 6, 1, 3, 5, 7] {
+        let offset = i64::from(bb.h) * eighth / 8;
+        let Ok(offset) = i32::try_from(offset) else {
+            continue;
+        };
+        let row = bb.y.saturating_add(offset);
+        let crossings = scanline_spans(points, row);
+        let widest = crossings
+            .chunks_exact(2)
+            .filter_map(|pair| match pair {
+                [left, right] if right > left => Some((right - left, (left + right) / 2.0)),
+                _ => None,
+            })
+            .max_by(|(a, _), (b, _)| a.total_cmp(b));
+        let Some((_, center)) = widest else {
+            continue;
+        };
+        let candidate = Point::new(center.round() as i32, row);
+        // The spans sample mid-pixel and `point_in_poly` tests the
+        // integer point, so they can disagree at a boundary. The
+        // authoritative test gets the last word; a rejection just moves
+        // on to the next row.
+        if point_in_poly(points, candidate) {
+            return candidate;
         }
     }
     mean
+}
+
+/// The sorted x positions where the polygon's edges cross the horizontal
+/// line through the center of pixel row `row`. Sampling mid-pixel
+/// sidesteps the vertex-exactly-on-scanline double-count.
+pub(crate) fn scanline_spans(points: &[Point], row: i32) -> Vec<f64> {
+    let mid = f64::from(row) + 0.5;
+    let count = points.len();
+    let mut crossings = Vec::new();
+    for i in 0..count {
+        let from = points[i];
+        let to = points[(i + 1) % count];
+        let (from_y, to_y) = (f64::from(from.y), f64::from(to.y));
+        if (from_y < mid) == (to_y < mid) {
+            continue;
+        }
+        let t = (mid - from_y) / (to_y - from_y);
+        crossings.push(f64::from(from.x) + t * f64::from(to.x - from.x));
+    }
+    crossings.sort_by(f64::total_cmp);
+    crossings
 }
 
 /// Fewer than three points is not a polygon. A geometric floor, not a
@@ -2070,6 +2121,92 @@ mod tests {
         assert!(e.hit_test_rotated(90, Point::new(50, 65)));
         assert!(!e.hit_test_rotated(90, Point::new(75, 40)));
         assert!(e.hit_test(Point::new(75, 40)), "unrotated it lies flat");
+    }
+
+    #[test]
+    fn a_crescents_click_point_is_inside_it_not_in_the_hollow() {
+        // The vertex average of a C sits in the opening, which is exactly
+        // the case the fallback exists for.
+        let c = Shape::Poly {
+            points: vec![
+                Point::new(0, 0),
+                Point::new(100, 0),
+                Point::new(100, 20),
+                Point::new(30, 20),
+                Point::new(30, 80),
+                Point::new(100, 80),
+                Point::new(100, 100),
+                Point::new(0, 100),
+            ],
+        };
+        let p = c.click_point();
+        assert!(c.hit_test(p), "{p:?} landed outside the crescent");
+    }
+
+    #[test]
+    fn a_click_point_is_interior_for_every_awkward_polygon() {
+        let shapes = [
+            // A thin diagonal band.
+            vec![
+                Point::new(0, 0),
+                Point::new(10, 0),
+                Point::new(100, 90),
+                Point::new(100, 100),
+                Point::new(90, 100),
+                Point::new(0, 10),
+            ],
+            // A zigzag whose average is off the shape.
+            vec![
+                Point::new(0, 0),
+                Point::new(20, 60),
+                Point::new(40, 0),
+                Point::new(60, 60),
+                Point::new(80, 0),
+                Point::new(80, 10),
+                Point::new(60, 70),
+                Point::new(40, 10),
+                Point::new(20, 70),
+                Point::new(0, 10),
+            ],
+            // A one-pixel-tall sliver: the mid row is the only row.
+            vec![
+                Point::new(0, 0),
+                Point::new(500, 0),
+                Point::new(500, 1),
+                Point::new(0, 1),
+            ],
+        ];
+        for points in shapes {
+            let shape = Shape::Poly {
+                points: points.clone(),
+            };
+            let p = shape.click_point();
+            assert!(shape.hit_test(p), "{p:?} outside {points:?}");
+        }
+    }
+
+    #[test]
+    fn a_click_point_does_not_scan_the_bounding_box() {
+        // The regression this replaced was O(width x height). A shape a
+        // million pixels wide used to take about 25ms; if a scan ever
+        // comes back this will stop finishing promptly.
+        let wide = Shape::Poly {
+            points: vec![
+                Point::new(1_000_000, 0),
+                Point::new(500_000, 750_000),
+                Point::new(0, 375_000),
+                Point::new(500_000, 650_000),
+                Point::new(940_000, 90_000),
+            ],
+        };
+        let started = std::time::Instant::now();
+        let p = wide.click_point();
+        assert!(wide.hit_test(p), "{p:?} outside");
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(50),
+            "took {:?} — the bounding-box scan is back",
+            started.elapsed()
+        );
     }
 
     #[test]
