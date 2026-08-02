@@ -31,6 +31,7 @@ unsafe extern "C" {
     fn CGImageGetWidth(image: *mut c_void) -> usize;
     fn CGImageGetHeight(image: *mut c_void) -> usize;
     fn CGImageGetBytesPerRow(image: *mut c_void) -> usize;
+    fn CGImageGetBitsPerPixel(image: *mut c_void) -> usize;
     fn CGImageGetDataProvider(image: *mut c_void) -> *mut c_void;
     fn CGDataProviderCopyData(provider: *mut c_void) -> *const c_void;
     fn CGImageRelease(image: *mut c_void);
@@ -77,6 +78,17 @@ pub fn capture_display(display: u32) -> Result<RgbaImage> {
     }
 }
 
+/// The only pixel layout this reader understands: 32 bits per pixel, four
+/// bytes, BGRA order.
+///
+/// It is what `CGDisplayCreateImage` returns for every display tested, but
+/// it is not guaranteed. An HDR/EDR panel can hand back 64-bit RGBA-half,
+/// and a reader that assumes 32 would take the left half of every row and
+/// return a **plausible, silently wrong picture** — the one failure this
+/// tool cannot tolerate, since every coordinate, crop, match score, and
+/// diff downstream would inherit it while looking fine.
+const SUPPORTED_BITS_PER_PIXEL: usize = 32;
+
 /// Turn a `CGImage` into an `RgbaImage`, undoing two CoreGraphics
 /// conventions: rows are padded to an alignment boundary, and pixels
 /// arrive as BGRA.
@@ -87,6 +99,30 @@ unsafe fn copy_pixels(image: *mut c_void) -> Result<RgbaImage> {
         let width = CGImageGetWidth(image);
         let height = CGImageGetHeight(image);
         let bytes_per_row = CGImageGetBytesPerRow(image);
+        let bits_per_pixel = CGImageGetBitsPerPixel(image);
+
+        // Ask before assuming. Refusing loudly is the whole point: this
+        // reader cannot convert an unexpected layout, and reading one as
+        // if it were BGRA produces a wrong image rather than an error.
+        if bits_per_pixel != SUPPORTED_BITS_PER_PIXEL {
+            bail!(
+                "the display returned {bits_per_pixel}-bit pixels; pixelcoords reads \
+                 {SUPPORTED_BITS_PER_PIXEL}-bit BGRA. Reading them anyway would produce a \
+                 wrong image rather than an error, so it stops here — please report this \
+                 with your display setup at \
+                 https://github.com/nolindnaidoo/pixelcoords/issues"
+            );
+        }
+        // A zero stride would panic `chunks_exact`, and a stride narrower
+        // than one row means the rows are not what they claim to be. The
+        // zero case is checked on its own because a zero *width* makes the
+        // comparison vacuously true and would let it through.
+        if bytes_per_row == 0 || bytes_per_row < width * 4 {
+            bail!(
+                "the display reported a {bytes_per_row}-byte stride for {width}-pixel rows, \
+                 which cannot hold them"
+            );
+        }
 
         let provider = CGImageGetDataProvider(image);
         if provider.is_null() {
