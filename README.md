@@ -151,10 +151,12 @@ is not a blanket claim.
 
 - **macOS** — the overlay was driven by hand through 0.5.0, color readout,
   measure tool and edge snapping included, and 0.5.1's capture path was
-  checked against a real capture. 0.5.2's mid-gesture `Shift` fix has
-  headless tests but no human run.
-- **Windows and Linux** — verified by hand through 0.4.0. Everything since
-  passes CI on both and has not been driven by a person there.
+  checked against a real capture.
+- **Windows and Linux** — verified by hand through 0.4.0.
+- **Nothing since 0.5.1 has had a human overlay run on any platform.**
+  That covers 0.5.2's mid-gesture `Shift` fix and 0.6.0's comfort
+  settings, both of which change how the overlay behaves and both of
+  which are backed by headless tests only.
 
 CI runs the full suite on all three platforms every push, and the overlay
 is the part tests cannot speak for. This table is kept honest — claims
