@@ -7,7 +7,7 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
-## Unreleased
+## 0.6.0
 
 ### Breaking: two unused items leave `pixelcoords-core`
 
