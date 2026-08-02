@@ -111,18 +111,60 @@ Coordinates section.
 
 ## Releases
 
-Before every publish, walk this list — the ones with easy misses first:
+Before every publish, walk this list. It is ordered by how easy each one
+is to miss, and every entry is here because it was missed once.
 
-1. **Update the install snippet in `crates/pixelcoords-core/README.md`.**
+1. **Sweep for claims the release invalidates**, before anything else.
+   Verification status lives in *three* places — `README.md`,
+   `CONTRIBUTING.md`, and `docs/TROUBLESHOOTING.md` — and updating the
+   README is the only one anybody remembers. Twice now they have
+   disagreed with each other, and once `CONTRIBUTING.md` claimed a
+   hardware run that had not happened.
+
+   ```bash
+   grep -rn 'verified\|by hand\|human run\|driven by hand' \
+     README.md CONTRIBUTING.md docs/*.md
+   grep -rn '0\.[0-9]\+\.[0-9]\+' --include='*.md' . | grep -v CHANGELOG
+   ```
+
+   Do this **before the tag**, not after. A doc fix that lands after the
+   tag is not in the release archives, which package `README.md`, nor in
+   the crate, whose `readme` is that same file.
+2. **Update the install snippet in `crates/pixelcoords-core/README.md`.**
    A pre-1.0 caret pin like `= "0.1"` resolves to the newest 0.1.x, not
    0.2.x — so a reader copy-pasting from crates.io lands on the old API.
-   Bump the string to the current minor before every minor cut.
-2. Update the workspace version and the core dep pin in
+   Bump it on a **minor**; leave it alone on a patch, where the existing
+   caret already resolves.
+3. **Bump the sample session output.** `docs/OUTPUT.md` and
+   `crates/pixelcoords-core/README.md` print a `session.json` carrying an
+   `app.version`. A doc showing what this build writes should show what
+   *this* build writes.
+4. **Leave `docs/PERFORMANCE.md`'s stamp alone unless you re-measure.**
+   It records when the numbers were taken, not the newest version they
+   describe. Editing it to match the release makes the document say
+   something untrue about itself. Either re-run the harnesses and paste
+   the new numbers, or say which paths the release did not touch.
+5. Update the workspace version and the core dep pin in
    `crates/pixelcoords/Cargo.toml`.
-3. Write the CHANGELOG entry.
-4. Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
+6. Write the CHANGELOG entry **from the diff**, not from the issues —
+   the release is what landed, not what was planned.
+7. Run `cargo fmt --all --check`, `cargo clippy --workspace --all-targets
    -- -D warnings`, and `cargo test --workspace`.
-5. Dry-run: `cargo publish -p pixelcoords-core --dry-run`.
+8. Dry-run: `cargo publish -p pixelcoords-core --dry-run`.
+
+After the tag:
+
+9. **Edit the draft the workflow created; do not create a release.**
+   `gh release create` on a tag that already has a draft makes a *second*
+   release — one with the notes and one with the binaries. That happened
+   at 0.5.1. Use `gh release edit`, or `gh api -X PATCH` on the draft's
+   id, and check afterwards that the tag has exactly one release.
+10. Publish core, then the binary. See the governance notes below.
+11. **Sync pixelcoords-site**: `TOOL_VERSION`, any copy the release
+    changed, and the visual baselines — `bun run snapshots` for darwin,
+    then the *Update visual snapshots (Linux)* workflow, then re-run CI
+    by hand because the bot's commit cannot trigger it. Syncing the site
+    to a stale tool doc is not a sync; step 1 is what makes it one.
 
 
 Versioning policy (also stated in [CHANGELOG.md](../CHANGELOG.md)):
