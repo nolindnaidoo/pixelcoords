@@ -747,10 +747,32 @@ fn poly_interior_point(points: &[Point]) -> Point {
     mean
 }
 
+/// Fewer than three points is not a polygon. A geometric floor, not a
+/// preference.
+pub const MIN_POLYGON_SIDES: u32 = 3;
+
+/// The most sides a regular polygon may have.
+///
+/// Not a judgement about how many anyone should want — a thousand-sided
+/// polygon inscribed in any real screen already has several vertices per
+/// pixel, so past this the extra points are indistinguishable from the
+/// circle they approximate. The bound exists because `sides` becomes a
+/// point-per-vertex allocation, and an unbounded count is an allocation
+/// request rather than a shape.
+///
+/// The overlay reaches 3 to 9, because those are the digit keys. That is
+/// the keyboard's reach, not this limit.
+pub const MAX_POLYGON_SIDES: u32 = 1_000;
+
 /// The regular `sides`-gon centered on `center` with its first vertex at
 /// `toward` — dragging both sizes and orients it in one gesture.
+///
+/// `sides` outside [`MIN_POLYGON_SIDES`]`..=`[`MAX_POLYGON_SIDES`] is
+/// clamped into it. Documented rather than silent: the previous ceiling
+/// was 12, which nothing said and nothing could reach, so a caller asking
+/// for 100 got a dodecagon and no indication why.
 pub fn regular_polygon(center: Point, toward: Point, sides: u32) -> Shape {
-    let sides = sides.clamp(3, 12) as usize;
+    let sides = sides.clamp(MIN_POLYGON_SIDES, MAX_POLYGON_SIDES) as usize;
     let dx = f64::from(toward.x) - f64::from(center.x);
     let dy = f64::from(toward.y) - f64::from(center.y);
     let r = dx.hypot(dy);
