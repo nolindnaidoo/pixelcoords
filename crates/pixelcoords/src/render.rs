@@ -28,8 +28,6 @@ const PANEL_MUTED: Color = Color {
     g: 0xB4,
     b: 0xB4,
 };
-/// Loupe source half-width: the magnifier shows a (2r+1)-pixel square.
-const LOUPE_SRC_RADIUS: i32 = 15;
 
 /// The wordmark on the panel's top edge.
 const BRAND: &str = "PixelCoords";
@@ -77,6 +75,9 @@ pub struct FrameState<'a> {
     pub cursor: Option<Point>,
     /// M is held: draw the magnifier loupe around the cursor.
     pub loupe: bool,
+    /// Loupe source half-width: the magnifier shows a `2r+1` pixel
+    /// square, so a larger radius trades magnification for context.
+    pub loupe_radius: i32,
     /// The session-name editor's in-progress text and caret state.
     pub naming: Option<(&'a str, bool)>,
     /// Edge snapping is on — shown in the panel's X row.
@@ -230,7 +231,7 @@ fn draw_loupe(canvas: &mut Canvas, background: &[u32], size: Size, state: &Frame
     let Some(cursor) = state.cursor else { return };
     let scale = state.ui_scale.max(1);
     let zoom = 6 * scale;
-    let edge_len = (LOUPE_SRC_RADIUS * 2 + 1) * zoom;
+    let edge_len = (state.loupe_radius * 2 + 1) * zoom;
     let gap = 20 * scale;
 
     // Above-right of the cursor, flipping to stay fully on-screen.
@@ -245,13 +246,13 @@ fn draw_loupe(canvas: &mut Canvas, background: &[u32], size: Size, state: &Frame
     let x0 = x0.clamp(0, (size.w - edge_len).max(0));
     let y0 = y0.clamp(0, (size.h - edge_len).max(0));
 
-    for sy in -LOUPE_SRC_RADIUS..=LOUPE_SRC_RADIUS {
-        for sx in -LOUPE_SRC_RADIUS..=LOUPE_SRC_RADIUS {
+    for sy in -state.loupe_radius..=state.loupe_radius {
+        for sx in -state.loupe_radius..=state.loupe_radius {
             let px = sample(background, size, cursor.x + sx, cursor.y + sy);
             canvas.fill_rect(
                 Rect::new(
-                    x0 + (sx + LOUPE_SRC_RADIUS) * zoom,
-                    y0 + (sy + LOUPE_SRC_RADIUS) * zoom,
+                    x0 + (sx + state.loupe_radius) * zoom,
+                    y0 + (sy + state.loupe_radius) * zoom,
                     zoom,
                     zoom,
                 ),
@@ -262,8 +263,8 @@ fn draw_loupe(canvas: &mut Canvas, background: &[u32], size: Size, state: &Frame
     // The cursor's exact pixel, outlined; then the loupe's own border.
     canvas.draw_rect_outline(
         Rect::new(
-            x0 + LOUPE_SRC_RADIUS * zoom,
-            y0 + LOUPE_SRC_RADIUS * zoom,
+            x0 + state.loupe_radius * zoom,
+            y0 + state.loupe_radius * zoom,
             zoom,
             zoom,
         ),
@@ -560,6 +561,7 @@ mod tests {
             polygon_sides: 6,
             cursor: None,
             loupe: false,
+            loupe_radius: 15,
             naming: None,
         };
         compose(&mut buffer, Size::new(W, H), &background, &state);
@@ -601,6 +603,7 @@ mod tests {
             polygon_sides: 6,
             cursor: Some(at),
             loupe,
+            loupe_radius: 15,
             naming: None,
         };
         compose(&mut buffer, Size::new(W, H), &background, &state);
@@ -696,6 +699,7 @@ mod tests {
             polygon_sides: 6,
             cursor: Some(Point::new(400, 100)),
             loupe: false,
+            loupe_radius: 15,
             naming: None,
         };
         compose(&mut buffer, Size::new(W, H), &background, &state);
@@ -736,6 +740,7 @@ mod tests {
             polygon_sides: 6,
             cursor: Some(Point::new(400, 100)),
             loupe: true,
+            loupe_radius: 15,
             naming: None,
         };
         compose(&mut buffer, Size::new(W, H), &background, &state);

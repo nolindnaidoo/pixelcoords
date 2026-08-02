@@ -5,6 +5,8 @@
 //! thicknesses, and unknown hotkey pieces are errors, never silently
 //! defaulted (the predecessor's silent numeric fallbacks were a bug class).
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -19,6 +21,19 @@ pub enum ConfigError {
     Thickness(u32),
     #[error("[snap] radius {0} is out of range (1-64 logical pixels)")]
     SnapRadius(u32),
+    #[error(
+        "[limits] label_length {0} is out of range (1-{max}); a label becomes part of a \
+         crop's filename, and past {max} the name can outgrow what a filesystem accepts",
+        max = crate::session::MAX_LABEL_LEN
+    )]
+    LabelLength(usize),
+    #[error("[overlay] {field} {value} is out of range ({low}-{high})")]
+    Overlay {
+        field: &'static str,
+        value: u64,
+        low: u64,
+        high: u64,
+    },
     #[error(transparent)]
     Hotkey(#[from] HotkeyError),
     #[error(
@@ -35,6 +50,78 @@ pub struct Config {
     pub hotkeys: Vec<HotkeyEntry>,
     pub capture: CaptureConfig,
     pub snap: SnapConfig,
+    pub limits: LimitsConfig,
+    pub overlay: OverlayConfig,
+}
+
+/// Constraints on what a session may hold.
+///
+/// Separate from [`OverlayConfig`] because these bound the *data*, not the
+/// feel: a label that is too long is a filename the save cannot write,
+/// whichever way it was typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LimitsConfig {
+    /// How many characters a label may hold.
+    ///
+    /// The default is 64 and the ceiling is
+    /// [`crate::session::MAX_LABEL_LEN`], which is derived from what a
+    /// filename can be rather than chosen. Lower it if you want shorter
+    /// crop names; there is no reason to, and no harm either.
+    pub label_length: usize,
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self { label_length: 64 }
+    }
+}
+
+/// How the overlay feels: reach, magnification, and how long it talks.
+///
+/// None of these change what is saved. They exist because the right
+/// number is a matter of hand, screen, and eyesight rather than something
+/// this project can pick for everyone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OverlayConfig {
+    /// Sides the polygon tool starts on.
+    ///
+    /// The digit keys reach 3 to 9 because that is what one keypress can
+    /// say. This is how you get anything else: set it here and the tool
+    /// opens on it.
+    pub polygon_sides: u32,
+    /// How close to a border counts as grabbing it, in logical pixels,
+    /// scaled per monitor. Larger is easier on a trackpad and makes small
+    /// shapes harder to click inside.
+    pub grab_tolerance: u32,
+    /// The magnifier's source radius: it shows a `2r+1` pixel square, so
+    /// larger means more context at less magnification.
+    pub loupe_radius: u32,
+    /// How long a message stays on screen — saves, errors, the things
+    /// worth reading twice.
+    pub flash_ms: u64,
+    /// How long the brief messages stay: tool switches and the like, the
+    /// ones confirming something you just did on purpose. Raise it if
+    /// 1.2 seconds is not long enough to read comfortably.
+    pub flash_brief_ms: u64,
+    /// Caret blink interval in the label editor. **`0` stops the blink**
+    /// and leaves the caret solid, which is a supported value rather than
+    /// an accident of the arithmetic.
+    pub caret_blink_ms: u64,
+}
+
+impl Default for OverlayConfig {
+    fn default() -> Self {
+        Self {
+            polygon_sides: 6,
+            grab_tolerance: 6,
+            loupe_radius: 15,
+            flash_ms: 2500,
+            flash_brief_ms: 1200,
+            caret_blink_ms: 500,
+        }
+    }
 }
 
 /// Edge snapping: whether it starts on, and how far it reaches.
@@ -138,6 +225,39 @@ impl Default for SnapSettings {
     }
 }
 
+/// Validated overlay comfort values, in the units the overlay uses.
+///
+/// `caret_blink` is an `Option` rather than a zero duration: "do not
+/// blink" is a different instruction from "blink every zero
+/// milliseconds", and the type says which one it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OverlaySettings {
+    pub polygon_sides: u32,
+    pub grab_tolerance: i32,
+    pub loupe_radius: i32,
+    pub flash: Duration,
+    pub flash_brief: Duration,
+    pub caret_blink: Option<Duration>,
+}
+
+impl Default for OverlaySettings {
+    fn default() -> Self {
+        OverlayConfig::default()
+            .into_settings()
+            .expect("the defaults are in range by construction")
+    }
+}
+
+impl OverlayConfig {
+    fn into_settings(self) -> Result<OverlaySettings, ConfigError> {
+        Config {
+            overlay: self,
+            ..Config::default()
+        }
+        .resolve_overlay()
+    }
+}
+
 /// Validated, ready-to-use style values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Style {
@@ -178,6 +298,56 @@ impl Config {
         Ok(SnapSettings {
             enabled: self.snap.enabled,
             radius: i32::try_from(self.snap.radius).unwrap_or(64),
+        })
+    }
+
+    /// Validated limits.
+    pub fn resolve_limits(&self) -> Result<LimitsConfig, ConfigError> {
+        let len = self.limits.label_length;
+        if len == 0 || len > crate::session::MAX_LABEL_LEN {
+            return Err(ConfigError::LabelLength(len));
+        }
+        Ok(self.limits)
+    }
+
+    /// Validated overlay comfort values.
+    ///
+    /// Every bound here is a range a person could plausibly want, widened
+    /// generously — the point of the table is to stop the tool deciding
+    /// for you, so the checks exist to catch a typo rather than to hold an
+    /// opinion. `caret_blink_ms` starts at 0 on purpose: 0 means "do not
+    /// blink", which is the one value someone may actively need.
+    pub fn resolve_overlay(&self) -> Result<OverlaySettings, ConfigError> {
+        let o = self.overlay;
+        let check = |field, value: u64, low: u64, high: u64| {
+            if value < low || value > high {
+                return Err(ConfigError::Overlay {
+                    field,
+                    value,
+                    low,
+                    high,
+                });
+            }
+            Ok(())
+        };
+        check(
+            "polygon_sides",
+            u64::from(o.polygon_sides),
+            u64::from(crate::geometry::MIN_POLYGON_SIDES),
+            u64::from(crate::geometry::MAX_POLYGON_SIDES),
+        )?;
+        check("grab_tolerance", u64::from(o.grab_tolerance), 1, 256)?;
+        check("loupe_radius", u64::from(o.loupe_radius), 1, 256)?;
+        check("flash_ms", o.flash_ms, 1, 60_000)?;
+        check("flash_brief_ms", o.flash_brief_ms, 1, 60_000)?;
+        check("caret_blink_ms", o.caret_blink_ms, 0, 60_000)?;
+        Ok(OverlaySettings {
+            polygon_sides: o.polygon_sides,
+            grab_tolerance: i32::try_from(o.grab_tolerance).unwrap_or(6),
+            loupe_radius: i32::try_from(o.loupe_radius).unwrap_or(15),
+            flash: Duration::from_millis(o.flash_ms),
+            flash_brief: Duration::from_millis(o.flash_brief_ms),
+            caret_blink: (o.caret_blink_ms > 0).then(|| Duration::from_millis(o.caret_blink_ms)),
         })
     }
 
@@ -490,6 +660,87 @@ mod tests {
             cfg.resolve_bindings(&[]),
             Err(ConfigError::Hotkey(_))
         ));
+    }
+
+    #[test]
+    fn the_new_tables_default_to_todays_behavior() {
+        // The whole point of a default is that an absent table changes
+        // nothing, so these are the constants they replaced.
+        let c = Config::default();
+        assert_eq!(c.resolve_limits().unwrap().label_length, 64);
+        let o = c.resolve_overlay().unwrap();
+        assert_eq!(o.polygon_sides, 6);
+        assert_eq!(o.grab_tolerance, 6);
+        assert_eq!(o.loupe_radius, 15);
+        assert_eq!(o.flash, Duration::from_millis(2500));
+        assert_eq!(o.flash_brief, Duration::from_millis(1200));
+        assert_eq!(o.caret_blink, Some(Duration::from_millis(500)));
+    }
+
+    #[test]
+    fn an_absent_table_is_the_default_not_an_error() {
+        let c: Config = toml::from_str("[style]\nthickness = 3\n").unwrap();
+        assert_eq!(c.limits, LimitsConfig::default());
+        assert_eq!(c.overlay, OverlayConfig::default());
+    }
+
+    #[test]
+    fn a_zero_caret_blink_means_do_not_blink() {
+        // Not an error and not a zero-length interval: the one value
+        // someone may actively need, so it has to be expressible.
+        let c: Config = toml::from_str("[overlay]\ncaret_blink_ms = 0\n").unwrap();
+        assert_eq!(c.resolve_overlay().unwrap().caret_blink, None);
+    }
+
+    #[test]
+    fn a_polygon_default_past_the_digit_keys_is_allowed() {
+        // The reason this knob exists: 3..=9 is what one keypress can
+        // say, and this is how anything else is reachable.
+        let c: Config = toml::from_str("[overlay]\npolygon_sides = 24\n").unwrap();
+        assert_eq!(c.resolve_overlay().unwrap().polygon_sides, 24);
+    }
+
+    #[test]
+    fn out_of_range_overlay_values_are_errors_naming_the_field() {
+        let cases = [
+            ("polygon_sides = 2", "polygon_sides"),
+            ("polygon_sides = 100000", "polygon_sides"),
+            ("grab_tolerance = 0", "grab_tolerance"),
+            ("loupe_radius = 0", "loupe_radius"),
+            ("flash_ms = 0", "flash_ms"),
+            ("flash_brief_ms = 999999", "flash_brief_ms"),
+            ("caret_blink_ms = 999999", "caret_blink_ms"),
+        ];
+        for (line, field) in cases {
+            let c: Config = toml::from_str(&format!("[overlay]\n{line}\n")).unwrap();
+            let Err(err) = c.resolve_overlay() else {
+                panic!("{line} was accepted");
+            };
+            let rendered = err.to_string();
+            assert!(rendered.contains(field), "{rendered:?} omits {field}");
+        }
+    }
+
+    #[test]
+    fn a_label_length_past_what_a_filename_holds_is_refused() {
+        for len in [0, crate::session::MAX_LABEL_LEN + 1] {
+            let c: Config = toml::from_str(&format!("[limits]\nlabel_length = {len}\n")).unwrap();
+            assert_eq!(c.resolve_limits(), Err(ConfigError::LabelLength(len)));
+        }
+        // The ceiling itself is allowed — a bound that rejects its own
+        // limit is an off-by-one nobody thinks to test for.
+        let c: Config = toml::from_str(&format!(
+            "[limits]\nlabel_length = {}\n",
+            crate::session::MAX_LABEL_LEN
+        ))
+        .unwrap();
+        assert!(c.resolve_limits().is_ok());
+    }
+
+    #[test]
+    fn the_new_tables_refuse_unknown_keys_like_every_other() {
+        assert!(toml::from_str::<Config>("[limits]\nlabel_len = 4\n").is_err());
+        assert!(toml::from_str::<Config>("[overlay]\nloupe = 4\n").is_err());
     }
 
     #[test]

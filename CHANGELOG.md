@@ -7,6 +7,48 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
+## Unreleased
+
+### The overlay's numbers are yours now
+
+Seven values that were constants in the source are configuration, each
+defaulting to exactly what it was — an absent table behaves as before, so
+a config written yesterday still means the same thing.
+
+```toml
+[limits]
+label_length = 64          # characters
+
+[overlay]
+polygon_sides = 6          # sides the polygon tool opens on
+grab_tolerance = 6         # logical px, scaled per monitor
+loupe_radius = 15          # the magnifier shows a 2r+1 pixel square
+flash_ms = 2500            # saves and errors
+flash_brief_ms = 1200      # tool switches
+caret_blink_ms = 500       # 0 stops the blink
+```
+
+**`polygon_sides` is the one that adds reach rather than taste.** The
+digit keys stop at 9 because that is what a single keypress can say, so
+until now a 24-gon was unreachable however much you wanted one. Set it
+here and the tool opens on it.
+
+**Two of these are accessibility rather than preference.**
+`caret_blink_ms = 0` stops the blink and leaves the caret solid — a
+supported value, not an accident of the arithmetic. And 1.2 seconds is
+not long enough for everyone to read a tool-switch message, which is what
+`flash_brief_ms` is for.
+
+Out-of-range values are errors naming the field, checked when the config
+loads, like every other table.
+
+`label_length`'s ceiling moved from 64 to **80**, and the number is now
+derived rather than picked. A label becomes `crop-<index>-<slug>.png`,
+the slug is one ASCII byte per character, `char::to_lowercase` can turn
+one character into three, and filesystems stop at 255 bytes. That
+arithmetic gives 80, so 80 is what the schema accepts and 64 is what the
+default lets you type.
+
 ## 0.5.3
 
 ### The speed claims are measured now

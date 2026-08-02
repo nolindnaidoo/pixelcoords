@@ -258,6 +258,7 @@ fn run_resume(args: &cli::Cli, path: &std::path::Path, out: Option<PathBuf>) -> 
     let measures = pixelcoords_core::session::restore_measures(&session);
     app.restore_session(selections, measures, previous, in_place);
     app.set_snap(config.resolve_snap()?);
+    app.set_overlay(config.resolve_overlay()?, config.resolve_limits()?);
     app.restore_panel(state::load_panel());
     app.run()
 }
@@ -1352,6 +1353,7 @@ fn run_overlay_picked(args: &cli::Cli) -> Result<()> {
         name: args.name.clone(),
     });
     app.set_snap(config.resolve_snap()?);
+    app.set_overlay(config.resolve_overlay()?, config.resolve_limits()?);
     app.restore_panel(state::load_panel());
     app.run()
 }
@@ -1436,6 +1438,7 @@ fn run_overlay(args: &cli::Cli) -> Result<()> {
         name: args.name.clone(),
     });
     app.set_snap(config.resolve_snap()?);
+    app.set_overlay(config.resolve_overlay()?, config.resolve_limits()?);
     app.restore_panel(state::load_panel());
     app.run()
 }
@@ -1668,6 +1671,8 @@ fn load_config(explicit: Option<&std::path::Path>) -> Result<Config> {
     if let Some(bad) = [
         config.resolve_style().err(),
         config.resolve_snap().err(),
+        config.resolve_limits().err(),
+        config.resolve_overlay().err(),
         config.resolve_monitors().err(),
     ]
     .into_iter()

@@ -17,18 +17,27 @@ pub const APP_NAME: &str = "pixelcoords";
 
 pub use crate::geometry::MAX_COORD;
 
-/// The longest label a selection or measure may carry.
+/// The longest label a selection or measure may carry — a ceiling
+/// derived from filenames, not a number anyone picked.
 ///
-/// A label becomes a filename component — `crop-<index>-<slug>.png` — and
-/// most filesystems stop at 255 bytes. That is the real constraint; 64
-/// leaves room for the prefix, the index, and multi-byte characters that
-/// slug to more bytes than they are characters.
+/// A label becomes `crop-<index>-<slug>.png`, and most filesystems stop
+/// at 255 bytes. The slug maps every character to one ASCII byte, but
+/// `char::to_lowercase` can expand one character into three, so the
+/// worst case is:
+///
+/// ```text
+/// "crop-" (5) + index (5) + "-" (1) + 3 x label + ".png" (4)  <=  255
+/// ```
+///
+/// which puts the label at 80. `[limits] label_length` defaults to 64
+/// and may be raised to here; past it a filename could outgrow what a
+/// filesystem accepts, which is a constraint rather than a preference.
 ///
 /// Enforced here as well as at the keyboard, because a session is a file
 /// a human can edit: a label that only the overlay checked would sail in
 /// through `resume` and fail at the filesystem on the next save, which is
 /// a confusing place to learn about it.
-pub const MAX_LABEL_LEN: usize = 64;
+pub const MAX_LABEL_LEN: usize = 80;
 
 /// Why a session file is not usable, even though it parsed.
 ///
