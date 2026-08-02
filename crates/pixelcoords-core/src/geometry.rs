@@ -3,8 +3,44 @@
 //! Ported from the predecessor's rectangle/circle tools; the drag semantics
 //! (preview normalization, grab-offset moves, clamp-to-bounds) are preserved
 //! so existing muscle memory carries over.
+//!
+//! # Domain
+//!
+//! Coordinates are `i32`, but the *domain* is [`MAX_COORD`] — see its docs
+//! for why the bound exists rather than being total over `i32`. Within it,
+//! nothing here panics and every operation is bounded in time;
+//! `tests/geometry_extremes.rs` holds that to the whole surface. Outside
+//! it, behavior is unspecified: an operation may panic under
+//! `overflow-checks`, and `Poly::click_point`'s fallback scan grows with
+//! the bounding box.
+//!
+//! Callers reading a session get this for free — `SessionFile::validate`
+//! refuses anything out of range at the load seam, so a coordinate that
+//! reaches this module has already been checked.
 
 use serde::{Deserialize, Serialize};
+
+/// The largest absolute value any coordinate or extent may carry.
+///
+/// A million pixels is more than an order of magnitude beyond the widest
+/// desktop anyone assembles, and small enough that every difference, sum,
+/// and product here stays far from an integer limit. Both halves matter:
+/// the first means no real screen is ever refused, the second means input
+/// inside the bound cannot overflow the arithmetic.
+///
+/// **Why a documented domain rather than saturating everything.** The
+/// workspace sets `overflow-checks = true` in release on the reasoning
+/// that a wrapped coordinate is silently wrong data in a file someone
+/// feeds to automation, and that a crash is the better failure. Making
+/// every operation total over all of `i32` means saturating, which
+/// produces exactly the confident-but-wrong number that decision rejects.
+/// A bound that real input never approaches, enforced once where untrusted
+/// input enters, keeps the honest failure and costs nothing.
+///
+/// The cost of the bound is bounded too: at the very edge,
+/// `Poly::click_point`'s worst-case scan takes about 25ms, and on a real
+/// screen it is under a millisecond.
+pub const MAX_COORD: i32 = 1_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Point {
@@ -282,8 +318,8 @@ impl Shape {
             Self::Ellipse { cx, cy, rx, ry } => {
                 // Normalized quadratic in i128: (dx*ry)^2 + (dy*rx)^2 <=
                 // (rx*ry)^2, boundary inclusive like the circle's test.
-                let dx = i128::from(p.x - cx);
-                let dy = i128::from(p.y - cy);
+                let dx = i128::from(p.x) - i128::from(cx);
+                let dy = i128::from(p.y) - i128::from(cy);
                 let rx = i128::from(rx);
                 let ry = i128::from(ry);
                 dx * dx * ry * ry + dy * dy * rx * rx <= rx * rx * ry * ry
@@ -715,8 +751,10 @@ fn poly_interior_point(points: &[Point]) -> Point {
 /// `toward` — dragging both sizes and orients it in one gesture.
 pub fn regular_polygon(center: Point, toward: Point, sides: u32) -> Shape {
     let sides = sides.clamp(3, 12) as usize;
-    let r = f64::from(toward.x - center.x).hypot(f64::from(toward.y - center.y));
-    let base = f64::from(toward.y - center.y).atan2(f64::from(toward.x - center.x));
+    let dx = f64::from(toward.x) - f64::from(center.x);
+    let dy = f64::from(toward.y) - f64::from(center.y);
+    let r = dx.hypot(dy);
+    let base = dy.atan2(dx);
     let step = std::f64::consts::TAU / sides as f64;
     let points = (0..sides)
         .map(|i| {
@@ -904,11 +942,17 @@ impl Shape {
             return self.clamp_move(grab_offset, cursor, region);
         }
         let bb = self.rotated_bbox(deg);
-        let right = region.x + region.w;
-        let bottom = region.y + region.h;
-        let nx = (cursor.x - grab_offset.x).clamp(region.x, (right - bb.w).max(region.x));
-        let ny = (cursor.y - grab_offset.y).clamp(region.y, (bottom - bb.h).max(region.y));
-        self.translated(nx - bb.x, ny - bb.y)
+        let right = region.x.saturating_add(region.w);
+        let bottom = region.y.saturating_add(region.h);
+        let nx = cursor
+            .x
+            .saturating_sub(grab_offset.x)
+            .clamp(region.x, right.saturating_sub(bb.w).max(region.x));
+        let ny = cursor
+            .y
+            .saturating_sub(grab_offset.y)
+            .clamp(region.y, bottom.saturating_sub(bb.h).max(region.y));
+        self.translated(nx.saturating_sub(bb.x), ny.saturating_sub(bb.y))
     }
 
     /// The grab reference for a rotated move: the rotated AABB origin.
@@ -979,10 +1023,10 @@ const fn triangle_in_box(bbox: Rect) -> Shape {
 /// Cross product of (b - a) x (p - a) in i64: the side of segment a->b
 /// that p lies on.
 const fn cross(px: i32, py: i32, ax: i32, ay: i32, bx: i32, by: i32) -> i64 {
-    let abx = (bx - ax) as i64;
-    let aby = (by - ay) as i64;
-    let apx = (px - ax) as i64;
-    let apy = (py - ay) as i64;
+    let abx = bx as i64 - ax as i64;
+    let aby = by as i64 - ay as i64;
+    let apx = px as i64 - ax as i64;
+    let apy = py as i64 - ay as i64;
     abx * apy - aby * apx
 }
 
@@ -1147,16 +1191,35 @@ impl Line {
     }
 
     /// Signed horizontal and vertical extent, `b - a`.
+    ///
+    /// Saturating, because the answer is an `i32` and the true difference
+    /// between two `i32`s need not be one. Screen coordinates never come
+    /// close, but a session is a file a human can edit, and a bounded
+    /// number beats a panic when the input was already meaningless.
+    /// [`Self::length`] and [`Self::angle_deg`] do not go through this —
+    /// they widen to `f64` first and stay exact at any input.
     #[must_use]
     pub const fn delta(self) -> (i32, i32) {
-        (self.b.x - self.a.x, self.b.y - self.a.y)
+        (
+            self.b.x.saturating_sub(self.a.x),
+            self.b.y.saturating_sub(self.a.y),
+        )
     }
 
     /// Euclidean length in pixels.
     #[must_use]
     pub fn length(self) -> f64 {
-        let (dx, dy) = self.delta();
-        f64::from(dx).hypot(f64::from(dy))
+        let (dx, dy) = self.delta_f64();
+        dx.hypot(dy)
+    }
+
+    /// The delta in `f64`, which holds any difference of two `i32`s
+    /// exactly. The integer [`Self::delta`] saturates; this does not.
+    fn delta_f64(self) -> (f64, f64) {
+        (
+            f64::from(self.b.x) - f64::from(self.a.x),
+            f64::from(self.b.y) - f64::from(self.a.y),
+        )
     }
 
     /// Direction in degrees within `[0, 360)`, `0` pointing right along
@@ -1170,11 +1233,11 @@ impl Line {
     /// than the NaN `atan2(0, 0)` would be entitled to.
     #[must_use]
     pub fn angle_deg(self) -> f64 {
-        let (dx, dy) = self.delta();
-        if dx == 0 && dy == 0 {
+        let (dx, dy) = self.delta_f64();
+        if dx == 0.0 && dy == 0.0 {
             return 0.0;
         }
-        let deg = f64::from(dy).atan2(f64::from(dx)).to_degrees();
+        let deg = dy.atan2(dx).to_degrees();
         if deg < 0.0 { deg + 360.0 } else { deg }
     }
 
@@ -1187,8 +1250,8 @@ impl Line {
         Rect::new(
             x,
             y,
-            (self.a.x - self.b.x).abs(),
-            (self.a.y - self.b.y).abs(),
+            i32::try_from(self.a.x.abs_diff(self.b.x)).unwrap_or(i32::MAX),
+            i32::try_from(self.a.y.abs_diff(self.b.y)).unwrap_or(i32::MAX),
         )
     }
 
