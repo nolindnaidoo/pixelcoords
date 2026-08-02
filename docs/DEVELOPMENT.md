@@ -151,18 +151,21 @@ first:
   should not disagree about timeouts, `--label`, or exit codes, and
   fixing that cost least before any of them existed. **That contract is
   now the thing later releases are held to**, not a plan.
-- **0.5.0 is reach**: new emit targets and external image input. Both
-  add places the toolchain can point without changing what it already
-  says to callers.
-- **0.6.0 is overlay and marking polish** — color readout, the measure
-  tool, edge snapping, localization. It touches neither the schema nor
-  the CLI, so it can ship in any release; it is last because everything
-  ahead of it is something other tools depend on.
+- **0.5.0 was reach and polish together.** They were planned as two
+  releases — reach (new emit targets, external image input) then overlay
+  polish (color readout, the measure tool, edge snapping, localization) —
+  and collapsed into one because half of each was dropped rather than
+  built. External image input and localization were both cut as answering
+  questions nobody had asked; what remained was three emit targets and
+  three overlay features, which is one release, not two. Neither touches
+  the schema or the CLI contract, so grouping them cost nothing.
 
-A minor bump is cheap here, so nothing is held back for a number. What
-is *not* cheap is changing an answer callers already script against —
-which is why the shared-vocabulary work is grouped ahead of the commands
-that would inherit its mistakes.
+A minor bump is cheap here, so nothing is held back for a number, and
+nothing is spent to reach one either: two plans becoming one release
+means one bump, not a skipped version. What is *not* cheap is changing
+an answer callers already script against — which is why the
+shared-vocabulary work is grouped ahead of the commands that would
+inherit its mistakes.
 
 - Features land through issues → PRs (`Closes #N`), each writing its
   CHANGELOG entry under the upcoming version's heading in the same PR.
