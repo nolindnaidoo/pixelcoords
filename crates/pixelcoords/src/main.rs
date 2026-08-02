@@ -1079,6 +1079,14 @@ fn load_session(path: &std::path::Path) -> Result<pixelcoords_core::session::Ses
         session.schema,
         pixelcoords_core::session::SCHEMA_VERSION
     );
+    // Parsing proved the shape; this proves the values mean something.
+    // Checked once here rather than at each use, so every command and
+    // `doctor` refuse the same file — the rule `load_config` already
+    // follows. Without it a `"scale": 0.0` reaches the arithmetic and
+    // comes back out as a confident, saturated, wrong coordinate.
+    session
+        .validate()
+        .with_context(|| format!("in {}", file_path.display()))?;
     Ok(session)
 }
 

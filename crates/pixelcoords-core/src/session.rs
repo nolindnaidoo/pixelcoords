@@ -7,12 +7,52 @@
 //! is a universal logical space.
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::geometry::{Point, Shape, Size, ToolKind};
 use crate::selection::Selection;
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const APP_NAME: &str = "pixelcoords";
+
+/// The largest absolute value any coordinate or extent in a session may
+/// carry.
+///
+/// A million pixels is more than an order of magnitude beyond the widest
+/// desktop anyone assembles, and small enough that every difference,
+/// sum, and product the geometry performs stays far from an integer
+/// limit. Both properties matter: the first means no real session is
+/// ever refused, the second means a session that passes this check
+/// cannot make the arithmetic downstream overflow.
+pub const MAX_COORD: i32 = 1_000_000;
+
+/// Why a session file is not usable, even though it parsed.
+///
+/// Parsing proves the shape; this proves the values mean something. The
+/// split matters because `serde` will happily accept `"scale": 0.0` — it
+/// is a valid `f64` — and every consumer downstream then divides by it.
+#[derive(Debug, Error, PartialEq)]
+pub enum SessionError {
+    #[error("monitor {index} ({name:?}) has scale {scale}, which is not a positive finite number")]
+    Scale {
+        index: usize,
+        name: String,
+        scale: f64,
+    },
+    #[error("monitor {index} ({name:?}) has size {w}x{h}; a display cannot be empty")]
+    MonitorSize {
+        index: usize,
+        name: String,
+        w: i32,
+        h: i32,
+    },
+    #[error("the target window has size {w}x{h}; a window cannot be empty")]
+    TargetSize { w: i32, h: i32 },
+    #[error(
+        "{what} carries the coordinate {value}, beyond the +/-{MAX_COORD} a session may describe"
+    )]
+    Coordinate { what: String, value: i32 },
+}
 
 /// How the session's frames were obtained. Optional in the schema —
 /// sessions written before it existed simply lack it.
@@ -409,6 +449,112 @@ pub fn restore_selections(file: &SessionFile) -> (Vec<Selection>, Vec<String>) {
     (kept, dropped)
 }
 
+/// Every raw coordinate a shape carries, in no particular order.
+///
+/// Deliberately arithmetic-free. `bbox()` is the natural way to ask a
+/// shape where it is, and it is exactly the wrong tool here: computing a
+/// bounding box on an out-of-range shape performs the very subtraction
+/// this check exists to prevent.
+fn raw_values(shape: &Shape) -> Vec<i32> {
+    match shape {
+        Shape::Rect(r) => vec![r.x, r.y, r.w, r.h],
+        Shape::Circle { cx, cy, r } => vec![*cx, *cy, *r],
+        Shape::Ellipse { cx, cy, rx, ry } => vec![*cx, *cy, *rx, *ry],
+        Shape::Triangle {
+            ax,
+            ay,
+            bx,
+            by,
+            cx,
+            cy,
+        } => vec![*ax, *ay, *bx, *by, *cx, *cy],
+        Shape::Poly { points } => points.iter().flat_map(|p| [p.x, p.y]).collect(),
+    }
+}
+
+fn in_range(values: &[i32], what: &str) -> Result<(), SessionError> {
+    for &value in values {
+        if value.abs() > MAX_COORD {
+            return Err(SessionError::Coordinate {
+                what: what.to_string(),
+                value,
+            });
+        }
+    }
+    Ok(())
+}
+
+impl SessionFile {
+    /// Check that a parsed session describes something a coordinate can
+    /// mean.
+    ///
+    /// Called at the load seam so every command and `doctor` refuse the
+    /// same file, the way `Config`'s resolution is checked once when the
+    /// config is read rather than at each use. A file that fails here is
+    /// malformed, not merely unusual, and the caller reports it as such.
+    pub fn validate(&self) -> Result<(), SessionError> {
+        for monitor in &self.monitors {
+            if !monitor.scale.is_finite() || monitor.scale <= 0.0 {
+                return Err(SessionError::Scale {
+                    index: monitor.index,
+                    name: monitor.name.clone(),
+                    scale: monitor.scale,
+                });
+            }
+            if monitor.size_px.w <= 0 || monitor.size_px.h <= 0 {
+                return Err(SessionError::MonitorSize {
+                    index: monitor.index,
+                    name: monitor.name.clone(),
+                    w: monitor.size_px.w,
+                    h: monitor.size_px.h,
+                });
+            }
+            let label = format!("monitor {}", monitor.index);
+            in_range(
+                &[
+                    monitor.origin_px.x,
+                    monitor.origin_px.y,
+                    monitor.size_px.w,
+                    monitor.size_px.h,
+                ],
+                &label,
+            )?;
+        }
+        if let Some(target) = &self.target {
+            if target.size_px.w <= 0 || target.size_px.h <= 0 {
+                return Err(SessionError::TargetSize {
+                    w: target.size_px.w,
+                    h: target.size_px.h,
+                });
+            }
+            in_range(
+                &[
+                    target.origin_px.x,
+                    target.origin_px.y,
+                    target.size_px.w,
+                    target.size_px.h,
+                ],
+                "the target window",
+            )?;
+        }
+        for (index, record) in self.selections.iter().enumerate() {
+            let label = format!("selection {index}");
+            in_range(&raw_values(&record.px), &label)?;
+            in_range(&raw_values(&record.global_px), &label)?;
+            if let Some(window) = &record.window_px {
+                in_range(&raw_values(window), &label)?;
+            }
+        }
+        for (index, record) in self.measures.iter().enumerate() {
+            let label = format!("measure {index}");
+            for line in [&record.px, &record.global_px] {
+                in_range(&[line.ax, line.ay, line.bx, line.by], &label)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The measures a saved session carries, back as editable rulers.
 ///
 /// Unlike `restore_selections` this drops nothing: a measure has no crop
@@ -565,6 +711,224 @@ mod tests {
         assert_eq!(restored[1].label, "gutter");
         // A resave reproduces the same records: the round trip is closed.
         assert_eq!(base().with_measures(&restored).measures, file.measures);
+    }
+
+    #[test]
+    fn an_empty_target_window_is_refused() {
+        let mut file =
+            SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None);
+        file.target = Some(TargetRecord {
+            app: "App".into(),
+            title: "T".into(),
+            monitor: 0,
+            origin_px: Point::new(0, 0),
+            size_px: Size::new(0, 400),
+        });
+        assert!(matches!(
+            file.validate(),
+            Err(SessionError::TargetSize { w: 0, h: 400 })
+        ));
+    }
+
+    #[test]
+    fn a_target_window_past_the_bound_is_refused() {
+        let mut file =
+            SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None);
+        file.target = Some(TargetRecord {
+            app: "App".into(),
+            title: "T".into(),
+            monitor: 0,
+            origin_px: Point::new(MAX_COORD + 1, 0),
+            size_px: Size::new(400, 400),
+        });
+        assert!(matches!(
+            file.validate(),
+            Err(SessionError::Coordinate { .. })
+        ));
+    }
+
+    #[test]
+    fn every_refusal_names_the_field_and_the_value() {
+        // These strings are what a user sees when a session is rejected,
+        // so they are output and get tested like output. A message that
+        // says "invalid session" and stops sends someone reading JSON by
+        // hand with no idea which number to look at.
+        let cases = [
+            (
+                SessionError::Scale {
+                    index: 2,
+                    name: "DELL".into(),
+                    scale: 0.0,
+                },
+                vec!["monitor 2", "DELL", "0", "positive finite"],
+            ),
+            (
+                SessionError::MonitorSize {
+                    index: 1,
+                    name: "Built-in".into(),
+                    w: 0,
+                    h: 1080,
+                },
+                vec!["monitor 1", "Built-in", "0x1080"],
+            ),
+            (
+                SessionError::TargetSize { w: 640, h: 0 },
+                vec!["target window", "640x0"],
+            ),
+            (
+                SessionError::Coordinate {
+                    what: "selection 3".into(),
+                    value: 2_000_000_000,
+                },
+                vec!["selection 3", "2000000000", "1000000"],
+            ),
+        ];
+        for (error, expected) in cases {
+            let rendered = error.to_string();
+            for needle in expected {
+                assert!(
+                    rendered.contains(needle),
+                    "{rendered:?} does not mention {needle:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_valid_session_passes_validation() {
+        let file = SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None);
+        assert_eq!(file.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_scale_that_cannot_divide_is_refused() {
+        // The reported defect: `scale: 0` divided into an inf, which the
+        // float-to-int cast saturated into i32::MAX and reported as a
+        // successful click point.
+        for bad in [0.0, -2.0, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let mut file =
+                SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None);
+            file.monitors[0].scale = bad;
+            let Err(SessionError::Scale { scale, index, .. }) = file.validate() else {
+                panic!("scale {bad} was accepted");
+            };
+            assert_eq!(index, 0);
+            // Bit-compare: the error must carry back the exact value it
+            // rejected, and NaN is not equal to itself.
+            assert_eq!(scale.to_bits(), bad.to_bits());
+        }
+    }
+
+    #[test]
+    fn a_positive_scale_below_one_is_fine() {
+        // Fractional scaling is unusual, not invalid — the check is
+        // "can this divide", not "is this a round number".
+        let mut file =
+            SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None);
+        file.monitors[0].scale = 0.75;
+        assert_eq!(file.validate(), Ok(()));
+    }
+
+    #[test]
+    fn an_empty_display_is_refused() {
+        for (w, h) in [(0, 1080), (1920, 0), (-1920, 1080)] {
+            let mut file =
+                SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None);
+            file.monitors[0].size_px = Size::new(w, h);
+            assert!(
+                matches!(file.validate(), Err(SessionError::MonitorSize { .. })),
+                "{w}x{h} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_coordinate_past_the_bound_is_refused_wherever_it_hides() {
+        let far = MAX_COORD + 1;
+        let base =
+            || SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None);
+
+        let mut in_monitor = base();
+        in_monitor.monitors[0].origin_px = Point::new(far, 0);
+        assert!(matches!(
+            in_monitor.validate(),
+            Err(SessionError::Coordinate { .. })
+        ));
+
+        let mut in_selection = base();
+        in_selection.selections.push(SelectionRecord {
+            shape: ToolKind::Rect,
+            label: String::new(),
+            monitor: 0,
+            px: Shape::Rect(Rect::new(far, 0, 10, 10)),
+            global_px: Shape::Rect(Rect::new(0, 0, 10, 10)),
+            rot_deg: None,
+            window_px: None,
+            crop: "c.png".into(),
+            color: None,
+        });
+        assert!(matches!(
+            in_selection.validate(),
+            Err(SessionError::Coordinate { .. })
+        ));
+
+        let mut in_measure = base().with_measures(&[crate::selection::Measure::new(
+            crate::geometry::Line::new(Point::new(far, 0), Point::new(0, 0)),
+            0,
+        )]);
+        in_measure.monitors = vec![monitor(0, 0, 0)];
+        assert!(matches!(
+            in_measure.validate(),
+            Err(SessionError::Coordinate { .. })
+        ));
+    }
+
+    #[test]
+    fn the_bound_itself_is_allowed() {
+        // A boundary that rejects its own limit would be a silent
+        // off-by-one nobody would think to test for.
+        let mut file =
+            SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None);
+        file.monitors[0].origin_px = Point::new(MAX_COORD, -MAX_COORD);
+        assert_eq!(file.validate(), Ok(()));
+    }
+
+    #[test]
+    fn every_shape_kind_is_walked_for_coordinates() {
+        // `raw_values` matches on the variant, so a new shape kind that
+        // forgets to list its fields would silently stop being checked.
+        let far = MAX_COORD + 1;
+        let shapes = [
+            Shape::Rect(Rect::new(far, 0, 1, 1)),
+            Shape::Circle {
+                cx: far,
+                cy: 0,
+                r: 1,
+            },
+            Shape::Ellipse {
+                cx: far,
+                cy: 0,
+                rx: 1,
+                ry: 1,
+            },
+            Shape::Triangle {
+                ax: far,
+                ay: 0,
+                bx: 1,
+                by: 1,
+                cx: 2,
+                cy: 2,
+            },
+            Shape::Poly {
+                points: vec![Point::new(far, 0), Point::new(1, 1), Point::new(2, 2)],
+            },
+        ];
+        for shape in shapes {
+            assert!(
+                raw_values(&shape).iter().any(|v| v.abs() > MAX_COORD),
+                "{shape:?} hid its out-of-range coordinate"
+            );
+        }
     }
 
     #[test]
