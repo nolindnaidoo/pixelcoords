@@ -1033,33 +1033,41 @@ impl App {
         }
     }
 
+    /// The winit-facing shim: decode, decide, and hand back only what
+    /// needs the event loop.
     fn key_event(&mut self, event_loop: &ActiveEventLoop, event: &KeyEvent) {
+        if let Some(action) = self.handle_key(&Keystroke::decode(event)) {
+            self.apply_action(event_loop, action);
+        }
+    }
+
+    /// Everything a keystroke does, minus the two actions that need the
+    /// event loop — those come back for the caller to apply.
+    fn handle_key(&mut self, key: &Keystroke) -> Option<Action> {
         // A Space release always parks the panel, whatever mode we are in —
         // the label editor eats key events, and a release swallowed there
         // would leave the panel glued to the cursor.
-        if event.state == ElementState::Released && event.logical_key == Key::Named(NamedKey::Space)
-        {
+        if !key.pressed && key.builtin == Some(Builtin::Space) {
             self.panel_held = false;
         }
         if matches!(self.mode, Mode::LabelEditing { .. }) {
-            if event.state == ElementState::Pressed {
-                self.label_editor_key(event);
+            if key.pressed {
+                self.label_editor_key(key);
             }
-            return;
+            return None;
         }
         if matches!(self.mode, Mode::SessionNaming { .. }) {
-            if event.state == ElementState::Pressed {
-                self.name_editor_key(event);
+            if key.pressed {
+                self.name_editor_key(key);
             }
-            return;
+            return None;
         }
 
         // Esc cancels whatever is in progress; with nothing in progress it
         // asks to quit (twice within the grace period when work is
         // unsaved) — the same double-tap guard the old Q binding had.
-        if event.state == ElementState::Pressed && event.logical_key == Key::Named(NamedKey::Escape)
-        {
-            match std::mem::replace(&mut self.mode, Mode::Idle) {
+        if key.pressed && key.builtin == Some(Builtin::Escape) {
+            let quit = match std::mem::replace(&mut self.mode, Mode::Idle) {
                 Mode::Dragging {
                     index, original, ..
                 }
@@ -1067,114 +1075,116 @@ impl App {
                     index, original, ..
                 } => {
                     self.selections.set_shape_live(index, original);
+                    false
                 }
-                Mode::Idle => self.request_quit(event_loop),
-                _ => {}
-            }
+                Mode::Idle => true,
+                _ => false,
+            };
             self.redraw_all();
-            return;
+            return quit.then_some(Action::Quit);
         }
 
         // M is a hold like Space: the loupe lives while it is down.
-        if let Key::Character(s) = &event.logical_key
-            && s.eq_ignore_ascii_case("m")
-        {
-            self.loupe_held = event.state == ElementState::Pressed;
+        if key.builtin == Some(Builtin::Loupe) {
+            self.loupe_held = key.pressed;
             self.redraw_frame(self.cursor_frame);
-            return;
+            return None;
         }
 
         // Space is a hold, not a binding: while it is down the control
         // panel rides the cursor; the release is handled above.
-        if event.logical_key == Key::Named(NamedKey::Space) {
-            if event.state == ElementState::Pressed {
+        if key.builtin == Some(Builtin::Space) {
+            if key.pressed {
                 self.panel_held = true;
             }
-            return;
+            return None;
         }
 
         // Number keys size the polygon tool: 3 to 9 sides.
         if self.tool == ToolKind::Polygon
-            && event.state == ElementState::Pressed
-            && let Key::Character(text) = &event.logical_key
-            && let Some(d) = text.chars().next().and_then(|c| c.to_digit(10))
+            && key.pressed
+            && let Some(Builtin::Digit(d)) = key.builtin
             && (3..=9).contains(&d)
         {
             self.polygon_sides = d;
             self.set_flash(format!("Polygon sides: {d}"), FLASH_TOOL);
-            return;
+            return None;
         }
 
         // Arrows nudge the shape under the cursor — 1px, 10px with Shift,
         // Alt resizes instead. Built in like Esc and Space (arrows are
         // named keys the binding grammar does not cover); holding the key
         // repeats.
-        if let Some((dx, dy)) = arrow_delta(&event.logical_key) {
-            if event.state == ElementState::Pressed && matches!(self.mode, Mode::Idle) {
+        if let Some(Builtin::Arrow { dx, dy }) = key.builtin {
+            if key.pressed && matches!(self.mode, Mode::Idle) {
                 self.nudge(dx, dy);
             }
-            return;
+            return None;
         }
 
-        let Some(key) = key_name(event) else { return };
-        let edge = match (event.state, event.repeat) {
-            (ElementState::Pressed, false) => Edge::Press,
-            (ElementState::Pressed, true) => Edge::Repeat,
-            (ElementState::Released, _) => Edge::Release,
+        let action = match_event(
+            &self.bindings,
+            key.binding?,
+            key.edge(),
+            self.overlay_state(),
+        )?;
+        // Shift turns undo into redo — modifiers are not part of the
+        // binding grammar, and Shift+Z is what every hand expects.
+        let action = if action == Action::Undo && self.shift_down {
+            Action::Redo
+        } else {
+            action
         };
-        if let Some(action) = match_event(&self.bindings, key, edge, self.overlay_state()) {
-            // Shift turns undo into redo — modifiers are not part of the
-            // binding grammar, and Shift+Z is what every hand expects.
-            let action = if action == Action::Undo && self.shift_down {
-                Action::Redo
-            } else {
-                action
-            };
-            // Mid-gesture, most actions could mutate the selection set out
-            // from under the gesture's held index (undo/delete) or hijack
-            // the mode (label edit) — refuse them until the mouse is up.
-            if !matches!(self.mode, Mode::Idle) && !allowed_mid_gesture(action) {
-                log::debug!("ignoring {action:?} during an active mouse gesture");
-                return;
-            }
-            self.apply_action(event_loop, action);
+        // Mid-gesture, most actions could mutate the selection set out
+        // from under the gesture's held index (undo/delete) or hijack
+        // the mode (label edit) — refuse them until the mouse is up.
+        if !matches!(self.mode, Mode::Idle) && !allowed_mid_gesture(action) {
+            log::debug!("ignoring {action:?} during an active mouse gesture");
+            return None;
         }
+        // The two that need the event loop go back to the caller; the rest
+        // are done here, so a test can drive everything but quitting.
+        if matches!(action, Action::Quit | Action::ReleaseMonitor) {
+            return Some(action);
+        }
+        self.apply_local_action(action);
+        None
     }
 
-    fn label_editor_key(&mut self, event: &KeyEvent) {
+    fn label_editor_key(&mut self, key: &Keystroke) {
         let Mode::LabelEditing { text, .. } = &mut self.mode else {
             return;
         };
-        match &event.logical_key {
-            Key::Named(NamedKey::Enter) => self.commit_label(),
-            Key::Named(NamedKey::Escape) => {
+        match key.builtin {
+            Some(Builtin::Enter) => self.commit_label(),
+            Some(Builtin::Escape) => {
                 self.mode = Mode::Idle;
                 self.caret_deadline = None;
             }
-            Key::Named(NamedKey::Backspace) => {
+            Some(Builtin::Backspace) => {
                 text.pop();
             }
-            _ => append_typed(text, event.text.as_deref()),
+            _ => append_typed(text, key.text.as_deref()),
         }
         self.caret_visible = true;
         self.caret_deadline = Some(Instant::now() + CARET_BLINK);
         self.redraw_all();
     }
 
-    fn name_editor_key(&mut self, event: &KeyEvent) {
+    fn name_editor_key(&mut self, key: &Keystroke) {
         let Mode::SessionNaming { text } = &mut self.mode else {
             return;
         };
-        match &event.logical_key {
-            Key::Named(NamedKey::Enter) => self.commit_session_name(),
-            Key::Named(NamedKey::Escape) => {
+        match key.builtin {
+            Some(Builtin::Enter) => self.commit_session_name(),
+            Some(Builtin::Escape) => {
                 self.mode = Mode::Idle;
                 self.caret_deadline = None;
             }
-            Key::Named(NamedKey::Backspace) => {
+            Some(Builtin::Backspace) => {
                 text.pop();
             }
-            _ => append_typed(text, event.text.as_deref()),
+            _ => append_typed(text, key.text.as_deref()),
         }
         self.caret_visible = true;
         self.caret_deadline = Some(Instant::now() + CARET_BLINK);
@@ -1739,6 +1749,83 @@ fn shape_is_committable(shape: &Shape) -> bool {
 }
 
 /// The unit step an arrow key asks for, screen-down positive.
+/// Keys the overlay handles itself, outside the binding grammar.
+///
+/// The grammar covers letters and Tab; these are the named keys and the
+/// two characters (`M`, the digits) whose behavior is not a bindable
+/// action but a mode of the overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Builtin {
+    Escape,
+    Space,
+    Enter,
+    Backspace,
+    Arrow {
+        dx: i32,
+        dy: i32,
+    },
+    /// `M`, the loupe hold.
+    Loupe,
+    Digit(u32),
+}
+
+/// One keyboard event, decoded out of winit's vocabulary into this
+/// crate's.
+///
+/// The split exists so the keyboard logic can be tested. `KeyEvent` is
+/// winit's and cannot be constructed outside it, which left the whole
+/// key path — modifier tracking, the mid-gesture gate, nudging, the text
+/// editors — unreachable from a test. Decoding happens in one place that
+/// makes no decisions, and every decision happens in `handle_key`, which
+/// takes this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Keystroke {
+    pressed: bool,
+    repeat: bool,
+    /// What the binding grammar calls this key, when it names it.
+    binding: Option<KeyName>,
+    /// What the overlay handles directly, when it does.
+    builtin: Option<Builtin>,
+    /// The characters this keystroke types, for the text editors.
+    text: Option<String>,
+}
+
+impl Keystroke {
+    /// Decode a winit event. Decisions belong in `handle_key`; this only
+    /// translates.
+    fn decode(event: &KeyEvent) -> Self {
+        let builtin = match &event.logical_key {
+            Key::Named(NamedKey::Escape) => Some(Builtin::Escape),
+            Key::Named(NamedKey::Space) => Some(Builtin::Space),
+            Key::Named(NamedKey::Enter) => Some(Builtin::Enter),
+            Key::Named(NamedKey::Backspace) => Some(Builtin::Backspace),
+            Key::Character(s) if s.eq_ignore_ascii_case("m") => Some(Builtin::Loupe),
+            Key::Character(s) => s
+                .chars()
+                .next()
+                .and_then(|c| c.to_digit(10))
+                .map(Builtin::Digit),
+            key => arrow_delta(key).map(|(dx, dy)| Builtin::Arrow { dx, dy }),
+        };
+        Self {
+            pressed: event.state == ElementState::Pressed,
+            repeat: event.repeat,
+            binding: key_name(event),
+            builtin,
+            text: event.text.as_deref().map(str::to_owned),
+        }
+    }
+
+    /// Which edge of the key this is, in the binding grammar's terms.
+    const fn edge(&self) -> Edge {
+        match (self.pressed, self.repeat) {
+            (true, false) => Edge::Press,
+            (true, true) => Edge::Repeat,
+            (false, _) => Edge::Release,
+        }
+    }
+}
+
 fn arrow_delta(key: &Key) -> Option<(i32, i32)> {
     match key {
         Key::Named(NamedKey::ArrowLeft) => Some((-1, 0)),
@@ -2192,6 +2279,263 @@ mod tests {
             "the ruler measures the button's real width"
         );
         assert!((app.selections.measures()[0].line.length() - 40.0).abs() < f64::EPSILON);
+    }
+
+    /// Build a keystroke the way `Keystroke::decode` would, without
+    /// needing a winit event nobody outside winit can construct — which is
+    /// the whole reason the decoded type exists.
+    fn stroke(builtin: Option<Builtin>, binding: Option<KeyName>, pressed: bool) -> Keystroke {
+        Keystroke {
+            pressed,
+            repeat: false,
+            binding,
+            builtin,
+            text: None,
+        }
+    }
+
+    fn typed(text: &str) -> Keystroke {
+        Keystroke {
+            pressed: true,
+            repeat: false,
+            binding: None,
+            builtin: None,
+            text: Some(text.to_string()),
+        }
+    }
+
+    #[test]
+    fn space_holds_the_panel_and_the_release_always_parks_it() {
+        let mut app = test_app();
+        assert_eq!(
+            app.handle_key(&stroke(Some(Builtin::Space), None, true)),
+            None
+        );
+        assert!(app.panel_held);
+        app.handle_key(&stroke(Some(Builtin::Space), None, false));
+        assert!(!app.panel_held);
+    }
+
+    #[test]
+    fn a_space_release_parks_the_panel_even_while_the_label_editor_has_focus() {
+        // The editor swallows key events; a release lost in there would
+        // leave the panel glued to the cursor for the rest of the session.
+        let mut app = test_app();
+        app.handle_key(&stroke(Some(Builtin::Space), None, true));
+        app.selections.add(Selection::new(rect(10, 10, 20, 20), 0));
+        app.mode = Mode::LabelEditing {
+            target: EditTarget::Selection,
+            index: 0,
+            text: String::new(),
+        };
+
+        app.handle_key(&stroke(Some(Builtin::Space), None, false));
+
+        assert!(!app.panel_held);
+        assert!(
+            matches!(app.mode, Mode::LabelEditing { .. }),
+            "still editing"
+        );
+    }
+
+    #[test]
+    fn m_holds_the_loupe() {
+        let mut app = test_app();
+        app.handle_key(&stroke(Some(Builtin::Loupe), None, true));
+        assert!(app.loupe_held);
+        app.handle_key(&stroke(Some(Builtin::Loupe), None, false));
+        assert!(!app.loupe_held);
+    }
+
+    #[test]
+    fn escape_cancels_a_gesture_and_restores_the_shape() {
+        let mut app = test_app();
+        let original = rect(10, 10, 30, 30);
+        app.selections.add(Selection::new(original.clone(), 0));
+        app.mode = Mode::Dragging {
+            frame: 0,
+            index: 0,
+            grab_offset: Point::new(1, 1),
+            original: original.clone(),
+        };
+        app.selections.set_shape_live(0, rect(90, 90, 30, 30));
+
+        let action = app.handle_key(&stroke(Some(Builtin::Escape), None, true));
+
+        assert_eq!(action, None, "cancelling a gesture must not quit");
+        assert!(matches!(app.mode, Mode::Idle));
+        assert_eq!(app.selections.items()[0].shape, original);
+    }
+
+    #[test]
+    fn escape_when_idle_asks_to_quit() {
+        let mut app = test_app();
+        assert_eq!(
+            app.handle_key(&stroke(Some(Builtin::Escape), None, true)),
+            Some(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn digits_size_the_polygon_tool_only_while_it_is_selected() {
+        let mut app = test_app();
+        app.tool = ToolKind::Rect;
+        app.handle_key(&stroke(Some(Builtin::Digit(7)), None, true));
+        assert_eq!(app.polygon_sides, 6, "the rect tool ignores digits");
+
+        app.tool = ToolKind::Polygon;
+        app.handle_key(&stroke(Some(Builtin::Digit(7)), None, true));
+        assert_eq!(app.polygon_sides, 7);
+
+        // Outside 3..=9 the digit is not a side count and falls through.
+        app.handle_key(&stroke(Some(Builtin::Digit(1)), None, true));
+        assert_eq!(app.polygon_sides, 7, "1 is not a polygon");
+    }
+
+    #[test]
+    fn arrows_nudge_only_when_idle() {
+        let mut app = test_app();
+        app.selections.add(Selection::new(rect(10, 10, 20, 20), 0));
+        app.cursor = Point::new(15, 15);
+
+        app.handle_key(&stroke(Some(Builtin::Arrow { dx: 1, dy: 0 }), None, true));
+        assert_eq!(app.selections.items()[0].shape, rect(11, 10, 20, 20));
+
+        // Mid-gesture the arrow must not move anything.
+        app.mode = Mode::Drawing {
+            frame: 0,
+            start: Point::new(50, 50),
+            path: Vec::new(),
+        };
+        app.handle_key(&stroke(Some(Builtin::Arrow { dx: 1, dy: 0 }), None, true));
+        assert_eq!(app.selections.items()[0].shape, rect(11, 10, 20, 20));
+    }
+
+    #[test]
+    fn shift_turns_undo_into_redo() {
+        let mut app = test_app();
+        app.selections.add(Selection::new(rect(10, 10, 20, 20), 0));
+        let z = || stroke(None, Some(KeyName::Character('Z')), true);
+
+        app.handle_key(&z());
+        assert!(app.selections.is_empty(), "undo removed the add");
+
+        app.shift_down = true;
+        app.handle_key(&z());
+        assert_eq!(app.selections.len(), 1, "shift redid it");
+    }
+
+    #[test]
+    fn a_binding_is_refused_mid_gesture_but_quit_still_works() {
+        let mut app = test_app();
+        app.selections.add(Selection::new(rect(10, 10, 20, 20), 0));
+        app.mode = Mode::Drawing {
+            frame: 0,
+            start: Point::new(50, 50),
+            path: Vec::new(),
+        };
+
+        // D would delete out from under the gesture's held index.
+        app.cursor = Point::new(15, 15);
+        app.handle_key(&stroke(None, Some(KeyName::Character('D')), true));
+        assert_eq!(app.selections.len(), 1, "delete was refused");
+    }
+
+    #[test]
+    fn the_label_editor_types_backspaces_and_commits() {
+        let mut app = test_app();
+        app.selections.add(Selection::new(rect(10, 10, 20, 20), 0));
+        app.mode = Mode::LabelEditing {
+            target: EditTarget::Selection,
+            index: 0,
+            text: String::new(),
+        };
+
+        app.handle_key(&typed("s"));
+        app.handle_key(&typed("u"));
+        app.handle_key(&typed("x"));
+        app.handle_key(&stroke(Some(Builtin::Backspace), None, true));
+        app.handle_key(&typed("b"));
+        app.handle_key(&stroke(Some(Builtin::Enter), None, true));
+
+        assert_eq!(app.selections.items()[0].label, "sub");
+        assert!(matches!(app.mode, Mode::Idle));
+    }
+
+    #[test]
+    fn the_label_editor_discards_on_escape() {
+        let mut app = test_app();
+        app.selections.add(Selection::new(rect(10, 10, 20, 20), 0));
+        app.mode = Mode::LabelEditing {
+            target: EditTarget::Selection,
+            index: 0,
+            text: "half typed".into(),
+        };
+
+        app.handle_key(&stroke(Some(Builtin::Escape), None, true));
+
+        assert!(matches!(app.mode, Mode::Idle));
+        assert_eq!(app.selections.items()[0].label, "", "nothing was committed");
+    }
+
+    #[test]
+    fn a_label_stops_at_the_length_cap() {
+        let mut app = test_app();
+        app.selections.add(Selection::new(rect(10, 10, 20, 20), 0));
+        app.mode = Mode::LabelEditing {
+            target: EditTarget::Selection,
+            index: 0,
+            text: String::new(),
+        };
+        for _ in 0..MAX_LABEL_LEN + 20 {
+            app.handle_key(&typed("x"));
+        }
+        let Mode::LabelEditing { text, .. } = &app.mode else {
+            panic!("still editing")
+        };
+        assert_eq!(text.chars().count(), MAX_LABEL_LEN);
+    }
+
+    #[test]
+    fn control_characters_never_reach_a_label() {
+        let mut app = test_app();
+        app.selections.add(Selection::new(rect(10, 10, 20, 20), 0));
+        app.mode = Mode::LabelEditing {
+            target: EditTarget::Selection,
+            index: 0,
+            text: String::new(),
+        };
+        app.handle_key(&typed("a\u{7}b\u{1b}c"));
+        let Mode::LabelEditing { text, .. } = &app.mode else {
+            panic!("still editing")
+        };
+        assert_eq!(text, "abc");
+    }
+
+    #[test]
+    fn the_session_name_editor_works_the_same_way() {
+        let mut app = test_app();
+        app.mode = Mode::SessionNaming {
+            text: String::new(),
+        };
+        app.handle_key(&typed("r"));
+        app.handle_key(&typed("u"));
+        app.handle_key(&typed("n"));
+        app.handle_key(&stroke(Some(Builtin::Enter), None, true));
+        assert_eq!(app.session_meta.name.as_deref(), Some("run"));
+    }
+
+    #[test]
+    fn an_edge_is_read_from_press_and_repeat() {
+        let press = stroke(None, Some(KeyName::Character('Q')), true);
+        assert_eq!(press.edge(), Edge::Press);
+        let mut repeat = press.clone();
+        repeat.repeat = true;
+        assert_eq!(repeat.edge(), Edge::Repeat);
+        let mut release = press;
+        release.pressed = false;
+        release.repeat = true;
+        assert_eq!(release.edge(), Edge::Release, "a release is a release");
     }
 
     #[test]
