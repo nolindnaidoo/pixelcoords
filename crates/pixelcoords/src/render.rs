@@ -3,10 +3,10 @@
 //! logic is testable without a window.
 
 use pixelcoords_core::config::Style;
-use pixelcoords_core::draw::{Canvas, Color, coord_text, smart_text_position};
+use pixelcoords_core::draw::{Canvas, Color, coord_text, measure_text, smart_text_position};
 use pixelcoords_core::font;
 use pixelcoords_core::geometry::ToolKind;
-use pixelcoords_core::geometry::{Point, Rect, Shape, Size};
+use pixelcoords_core::geometry::{Line, Point, Rect, Shape, Size};
 use pixelcoords_core::selection::SelectionSet;
 use pixelcoords_core::strings::Strings;
 
@@ -50,6 +50,12 @@ pub struct FrameState<'a> {
     /// Selection index currently in the label editor, with its in-progress
     /// text and caret state.
     pub editing: Option<(usize, &'a str, bool)>,
+    /// Measure index currently in the label editor. Separate from
+    /// `editing` because measures are their own array — one index cannot
+    /// address both.
+    pub measure_editing: Option<(usize, &'a str, bool)>,
+    /// The measure being drawn or dragged, not yet committed.
+    pub measure_preview: Option<Line>,
     pub flash: Option<&'a str>,
     pub strings: &'a Strings,
     pub style: Style,
@@ -115,6 +121,41 @@ pub fn compose(buffer: &mut [u32], size: Size, background: &[u32], state: &Frame
             size,
             &caption,
             state.style.label,
+            state.ui_scale,
+        );
+    }
+
+    for (index, m) in state.selections.measures().iter().enumerate() {
+        if m.monitor != state.monitor {
+            continue;
+        }
+        canvas.draw_line(m.line, state.style.complete, state.style.thickness);
+        let caption = match state.measure_editing {
+            Some((edit_index, text, caret)) if edit_index == index => {
+                let mark = if caret { "_" } else { " " };
+                format!("{text}{mark}")
+            }
+            _ if m.label.is_empty() => measure_text(m.line),
+            _ => m.label.clone(),
+        };
+        draw_caption(
+            &mut canvas,
+            m.line.bbox(),
+            size,
+            &caption,
+            state.style.label,
+            state.ui_scale,
+        );
+    }
+
+    if let Some(line) = state.measure_preview {
+        canvas.draw_line(line, state.style.preview, state.style.thickness);
+        draw_caption(
+            &mut canvas,
+            line.bbox(),
+            size,
+            &measure_text(line),
+            state.style.preview,
             state.ui_scale,
         );
     }
@@ -340,11 +381,12 @@ fn draw_hud(canvas: &mut Canvas, size: Size, state: &FrameState) {
     // The panel reads at a glance from across the screen, so its type is
     // one step larger than the monitor's base text scale.
     let text_scale = scale + 1;
-    let rows = if state.editing.is_some() || state.naming.is_some() {
-        state.strings.hud_edit_rows
-    } else {
-        state.strings.hud_hint_rows
-    };
+    let rows =
+        if state.editing.is_some() || state.measure_editing.is_some() || state.naming.is_some() {
+            state.strings.hud_edit_rows
+        } else {
+            state.strings.hud_hint_rows
+        };
 
     // The W row doubles as the live tool indicator — a static hint list
     // everywhere else, one dynamic slot here.
@@ -356,6 +398,7 @@ fn draw_hud(canvas: &mut Canvas, size: Size, state: &FrameState) {
         ToolKind::Polygon => "polygon",
         ToolKind::Freehand => "freehand",
         ToolKind::Poly => "poly",
+        ToolKind::Measure => "measure",
     };
     let tool_action = if state.tool == ToolKind::Polygon {
         format!("tool: polygon ({})", state.polygon_sides)
@@ -460,6 +503,8 @@ mod tests {
             target: None,
             preview,
             editing: None,
+            measure_editing: None,
+            measure_preview: None,
             flash: None,
             strings: &EN,
             style: Config::default().resolve_style().unwrap(),
@@ -497,6 +542,8 @@ mod tests {
             target: None,
             preview: None,
             editing: None,
+            measure_editing: None,
+            measure_preview: None,
             flash: None,
             strings: &EN,
             style: Config::default().resolve_style().unwrap(),
@@ -588,6 +635,8 @@ mod tests {
             target: None,
             preview: None,
             editing: None,
+            measure_editing: None,
+            measure_preview: None,
             flash: None,
             strings: &EN,
             style: Config::default().resolve_style().unwrap(),
@@ -624,6 +673,8 @@ mod tests {
             target: None,
             preview: None,
             editing: None,
+            measure_editing: None,
+            measure_preview: None,
             flash: None,
             strings: &EN,
             style: Config::default().resolve_style().unwrap(),

@@ -180,7 +180,8 @@ pub fn write_session(
         target.cloned(),
     )
     .with_meta(meta.platform.clone(), meta.capture, meta.name.clone())
-    .with_colors(&colors);
+    .with_colors(&colors)
+    .with_measures(selections.measures());
 
     let json_path = dir.join("session.json");
     let json = serde_json::to_string_pretty(&session).context("serializing session")?;

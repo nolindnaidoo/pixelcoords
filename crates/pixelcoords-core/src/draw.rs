@@ -4,7 +4,7 @@
 //! fully off-buffer is safe and silent.
 
 use crate::font;
-use crate::geometry::{Point, Rect, Shape, Size};
+use crate::geometry::{Line, Point, Rect, Shape, Size};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Color {
@@ -308,6 +308,24 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// A measure ruler: the segment plus square end caps, so the two
+    /// grabbable endpoints are visible against any background.
+    pub fn draw_line(&mut self, line: Line, color: Color, thickness: i32) {
+        if thickness <= 0 {
+            return;
+        }
+        self.stamp_segment(line.a, line.b, color, thickness);
+        let cap = (thickness * 3).max(3);
+        let half = cap / 2;
+        for end in [line.a, line.b] {
+            self.draw_rect_outline(
+                Rect::new(end.x - half, end.y - half, cap, cap),
+                color,
+                thickness,
+            );
+        }
+    }
+
     /// Even-odd scanline fill — correct for concave and self-touching
     /// freehand outlines, not just convex N-gons.
     fn fill_poly(&mut self, points: &[Point], color: Color) {
@@ -452,6 +470,22 @@ pub fn coord_text(shape: &Shape) -> String {
             format!("({}, {}) {}x{}", b.x, b.y, b.w, b.h)
         }
     }
+}
+
+/// The caption for a measure, e.g. `\u{394}120,-40 \u{b7} 126px \u{b7} 341\u{b0}`.
+///
+/// The deltas are signed and in screen space (Y grows down), the length is
+/// rounded to whole pixels, and the angle is clockwise from +X — the same
+/// convention `Line::angle_deg` documents, so the overlay and the saved
+/// session never disagree.
+#[must_use]
+pub fn measure_text(line: Line) -> String {
+    let (dx, dy) = line.delta();
+    format!(
+        "\u{394}{dx},{dy} \u{b7} {:.0}px \u{b7} {:.0}\u{b0}",
+        line.length(),
+        line.angle_deg()
+    )
 }
 
 /// Where to place a caption of `text_len` glyphs (drawn at `scale`) near
@@ -938,6 +972,55 @@ mod tests {
     fn scaled_smart_position_scales_offsets() {
         let p = smart_text_position(Rect::new(200, 200, 100, 50), Size::new(1920, 1080), 10, 2);
         assert_eq!(p, Point::new(200, 200 - font::line_height(2) - 8));
+    }
+
+    #[test]
+    fn measure_text_reports_deltas_length_and_clockwise_angle() {
+        // 3-4-5 triangle pointing down-right: screen Y grows down, so the
+        // angle is measured clockwise from +X.
+        let line = Line::new(Point::new(0, 0), Point::new(30, 40));
+        assert_eq!(
+            measure_text(line),
+            "\u{394}30,40 \u{b7} 50px \u{b7} 53\u{b0}"
+        );
+        // Negative deltas keep their sign; straight up is 270.
+        let up = Line::new(Point::new(10, 100), Point::new(10, 40));
+        assert_eq!(
+            measure_text(up),
+            "\u{394}0,-60 \u{b7} 60px \u{b7} 270\u{b0}"
+        );
+    }
+
+    #[test]
+    fn draw_line_marks_both_endpoints() {
+        let mut buf = vec![0u32; 40 * 40];
+        let mut canvas = Canvas::new(&mut buf, 40, 40);
+        let color = Color {
+            r: 0xFF,
+            g: 0,
+            b: 0,
+        };
+        canvas.draw_line(Line::new(Point::new(10, 10), Point::new(30, 10)), color, 1);
+        let ink = color.to_0rgb();
+        // The segment itself.
+        assert_eq!(buf[10 * 40 + 20], ink);
+        // Caps: the endpoints get a box, so pixels off the segment axis
+        // are inked at each end but not in the middle.
+        assert_eq!(buf[9 * 40 + 9], ink);
+        assert_eq!(buf[9 * 40 + 31], ink);
+        assert_ne!(buf[9 * 40 + 20], ink);
+    }
+
+    #[test]
+    fn draw_line_ignores_nonpositive_thickness() {
+        let mut buf = vec![0u32; 20 * 20];
+        let mut canvas = Canvas::new(&mut buf, 20, 20);
+        canvas.draw_line(
+            Line::new(Point::new(2, 2), Point::new(18, 2)),
+            Color { r: 9, g: 9, b: 9 },
+            0,
+        );
+        assert!(buf.iter().all(|&p| p == 0));
     }
 
     #[test]

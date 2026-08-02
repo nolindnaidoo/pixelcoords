@@ -136,6 +136,22 @@ point to aim at), `simplify_path` (Ramer–Douglas–Peucker, for freehand),
 `rotate_point_about`, `normalize_deg`, and the clamped move/resize
 helpers the overlay drives.
 
+`Line` is the measure tool's primitive and deliberately not a `Shape` —
+it marks a distance, not a region, so it has no interior to hit-test or
+crop. It carries `length`, `delta`, `angle_deg` (clockwise from +X,
+because screen Y grows downward), endpoint and segment hit-testing for
+grabbing, and `constrained` for the 45° snap.
+
+```rust
+use pixelcoords_core::geometry::{Line, Point};
+
+let gap = Line::new(Point::new(0, 0), Point::new(30, 40));
+
+assert_eq!(gap.length(), 50.0);
+assert_eq!(gap.delta(), (30, 40));
+assert!((gap.angle_deg() - 53.13).abs() < 0.01);
+```
+
 ## Is this region still where it was?
 
 `locate` is masked template matching — the engine behind `pixelcoords

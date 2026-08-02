@@ -66,12 +66,24 @@ pixelcoords-captures/20260727-113542-097/
       "crop": "crop-0-login-button.png",
       "color": "#3A7BD5"
     }
+  ],
+  "measures": [
+    {
+      "label": "gutter",
+      "monitor": 0,
+      "px": { "ax": 120, "ay": 300, "bx": 150, "by": 340 },
+      "global_px": { "ax": 120, "ay": 300, "bx": 150, "by": 340 },
+      "length_px": 50.0,
+      "dx": 30,
+      "dy": 40,
+      "angle_deg": 53.13010235415598
+    }
   ]
 }
 ```
 
-`target`, `window_px`, `rot_deg`, and `color` appear only when
-applicable.
+`target`, `window_px`, `rot_deg`, `color`, and `measures` appear only
+when applicable.
 
 `color` is the captured pixel at the selection's **click point** — the
 same interior point `assert` and `emit` aim at — as uppercase `#RRGGBB`.
@@ -135,6 +147,45 @@ grid, which is what automation tools and screenshots use.
   `{ax, ay, bx, by, cx, cy}`. Rotation is baked into the vertices at save
   time, so the stored geometry is always exact and `rot_deg` never
   appears.
+
+## Measures
+
+Rulers drawn with the measure tool serialize into a top-level `measures`
+array, alongside `selections` rather than inside it — a measurement marks
+a distance, not a region, so it has no shape, no crop, and no cutout. The
+key is omitted entirely when a session has none, so files written before
+the tool existed and files written without it look identical.
+
+```json
+"measures": [
+  {
+    "label": "gutter",
+    "monitor": 0,
+    "px": { "ax": 120, "ay": 300, "bx": 150, "by": 340 },
+    "global_px": { "ax": 120, "ay": 300, "bx": 150, "by": 340 },
+    "length_px": 50.0,
+    "dx": 30,
+    "dy": 40,
+    "angle_deg": 53.13010235415598
+  }
+]
+```
+
+- `px` / `global_px` — the two endpoints, in the same two coordinate
+  spaces the selections use. Flat (`ax`, `ay`, `bx`, `by`) because a
+  measure is always exactly two points.
+- `length_px` — Euclidean distance between them, unrounded. The overlay
+  caption rounds it for display; the file does not.
+- `dx` / `dy` — `b - a`, signed and in screen space, so `dy` is positive
+  downward.
+- `angle_deg` — `[0, 360)`, `0` pointing right along +X and increasing
+  **clockwise**, because screen Y grows downward. A zero-length measure
+  reports `0.0`, not `NaN`.
+
+`length_px`, `dx`, `dy`, and `angle_deg` are all derivable from `px`;
+they are stored so a consumer reads a number off a ruler without
+reimplementing the geometry — and so the overlay and the file can never
+disagree about which way the angle turns.
 
 ## Crops
 

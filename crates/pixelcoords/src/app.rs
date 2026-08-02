@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use image::RgbaImage;
 use pixelcoords_core::config::Style;
-use pixelcoords_core::geometry::{Point, Rect, ResizeHandle, Shape, Size, ToolKind};
+use pixelcoords_core::geometry::{Line, Point, Rect, ResizeHandle, Shape, Size, ToolKind};
 use pixelcoords_core::hotkeys::{Action, Binding, Edge, KeyName, OverlayState, match_event};
-use pixelcoords_core::selection::{GrabKind, Selection, SelectionSet};
+use pixelcoords_core::selection::{GrabKind, Measure, MeasureGrab, Selection, SelectionSet};
 use pixelcoords_core::session::TargetRecord;
 use pixelcoords_core::strings::{EN, Strings};
 use winit::application::ApplicationHandler;
@@ -97,6 +97,14 @@ enum Release {
     Quit,
 }
 
+/// Which array a label-editor index addresses. Selections and measures
+/// are separate collections, so the index alone is ambiguous.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EditTarget {
+    Selection,
+    Measure,
+}
+
 enum Mode {
     Idle,
     /// `frame` locks the draw to the monitor it started on; `path` is the
@@ -118,7 +126,18 @@ enum Mode {
         handle: ResizeHandle,
         original: Shape,
     },
+    /// Dragging an existing measure: one endpoint, or the whole ruler.
+    MeasureDragging {
+        frame: usize,
+        index: usize,
+        grab: MeasureGrab,
+        original: Line,
+        /// Cursor-to-`a` offset, so a whole-line move keeps its grip
+        /// instead of snapping the endpoint to the pointer.
+        grab_offset: Point,
+    },
     LabelEditing {
+        target: EditTarget,
         index: usize,
         text: String,
     },
@@ -234,7 +253,8 @@ impl App {
     }
 
     /// Adopt a saved session's state for resumed editing: its selections
-    /// (seeded without undo history — the resume point is the floor), and
+    /// (seeded without undo history — the resume point is the floor), its
+    /// measures, and
     /// when saving back in place, the crops it wrote plus resave
     /// semantics, so the next save skips, retires, and re-encodes exactly
     /// as if the session never closed. A diverted `--out` starts fresh:
@@ -242,10 +262,11 @@ impl App {
     pub fn restore_session(
         &mut self,
         selections: Vec<Selection>,
+        measures: Vec<Measure>,
         previous: Vec<crate::save::WrittenCrop>,
         in_place: bool,
     ) {
-        self.selections = SelectionSet::seed(selections);
+        self.selections = SelectionSet::seed(selections, measures);
         if in_place {
             self.last_crops = previous;
             self.saved_once = true;
@@ -320,6 +341,28 @@ impl App {
         self.selections.hit_topmost(monitor, self.cursor)
     }
 
+    /// The measure being drawn or dragged on `frame_idx`, if any.
+    ///
+    /// Separate from `preview_for` because a measure is a `Line`, not a
+    /// `Shape` — the whole reason it lives in its own session array.
+    fn measure_preview(&self, frame_idx: usize) -> Option<Line> {
+        match self.mode {
+            Mode::Drawing { frame, start, .. }
+                if frame == frame_idx && self.tool == ToolKind::Measure =>
+            {
+                let line = Line::new(start, self.cursor);
+                // Shift constrains to horizontal, vertical, or 45 —
+                // the same grammar the other tools give Shift.
+                Some(if self.shift_down {
+                    line.constrained()
+                } else {
+                    line
+                })
+            }
+            _ => None,
+        }
+    }
+
     fn preview_for(&self, frame_idx: usize) -> Option<Shape> {
         let Mode::Drawing { frame, start, path } = &self.mode else {
             return None;
@@ -365,9 +408,22 @@ impl App {
         };
         let preview = self.preview_for(frame_idx);
         let editing = match &self.mode {
-            Mode::LabelEditing { index, text } => Some((*index, text.as_str(), self.caret_visible)),
+            Mode::LabelEditing {
+                target: EditTarget::Selection,
+                index,
+                text,
+            } => Some((*index, text.as_str(), self.caret_visible)),
             _ => None,
         };
+        let measure_editing = match &self.mode {
+            Mode::LabelEditing {
+                target: EditTarget::Measure,
+                index,
+                text,
+            } => Some((*index, text.as_str(), self.caret_visible)),
+            _ => None,
+        };
+        let measure_preview = self.measure_preview(frame_idx);
         let flash = self
             .flash
             .as_ref()
@@ -400,6 +456,8 @@ impl App {
             target,
             preview,
             editing,
+            measure_editing,
+            measure_preview,
             flash,
             strings: self.strings,
             style,
@@ -432,9 +490,23 @@ impl App {
     }
 
     fn commit_label(&mut self) {
-        if let Mode::LabelEditing { index, text } = std::mem::replace(&mut self.mode, Mode::Idle)
-            && self.selections.set_label(index, text)
-        {
+        let changed = match std::mem::replace(&mut self.mode, Mode::Idle) {
+            Mode::LabelEditing {
+                target: EditTarget::Selection,
+                index,
+                text,
+            } => self.selections.set_label(index, text),
+            Mode::LabelEditing {
+                target: EditTarget::Measure,
+                index,
+                text,
+            } => self.selections.label_measure(index, text),
+            other => {
+                self.mode = other;
+                false
+            }
+        };
+        if changed {
             self.mark_dirty();
         }
         self.caret_deadline = None;
@@ -442,6 +514,19 @@ impl App {
 
     fn grab_tolerance(&self) -> i32 {
         GRAB_TOLERANCE * self.frames[self.cursor_frame].ui_scale
+    }
+
+    /// The measure under the cursor, but only while the measure tool is
+    /// active — otherwise a ruler lying across a rect would swallow the
+    /// other tools' delete and label keys.
+    fn measure_at_cursor(&self) -> Option<usize> {
+        if self.tool != ToolKind::Measure {
+            return None;
+        }
+        let monitor = self.frames[self.cursor_frame].info.index;
+        self.selections
+            .grab_measure(monitor, self.cursor, self.grab_tolerance())
+            .map(|(index, _)| index)
     }
 
     fn grab_at_cursor(&self) -> Option<(usize, GrabKind)> {
@@ -456,6 +541,44 @@ impl App {
         }
         if matches!(self.mode, Mode::SessionNaming { .. }) {
             self.commit_session_name();
+        }
+        // The measure tool owns the pointer while it is active: a press
+        // grabs an existing ruler's endpoint or body, and otherwise
+        // starts a new one. Shapes are not grabbable in this mode, so a
+        // ruler drawn over a rect stays reachable.
+        if self.tool == ToolKind::Measure {
+            let monitor = self.frames[self.cursor_frame].info.index;
+            if let Some((index, grab)) =
+                self.selections
+                    .grab_measure(monitor, self.cursor, self.grab_tolerance())
+            {
+                let original = self.selections.measures()[index].line;
+                self.mode = Mode::MeasureDragging {
+                    frame: self.cursor_frame,
+                    index,
+                    grab,
+                    original,
+                    grab_offset: Point::new(
+                        self.cursor.x - original.a.x,
+                        self.cursor.y - original.a.y,
+                    ),
+                };
+                self.redraw_all();
+                return;
+            }
+            if !self.frames[self.cursor_frame]
+                .draw_rect
+                .contains(self.cursor)
+            {
+                return;
+            }
+            self.mode = Mode::Drawing {
+                frame: self.cursor_frame,
+                start: self.cursor,
+                path: Vec::new(),
+            };
+            self.redraw_all();
+            return;
         }
         match self.grab_at_cursor() {
             Some((index, GrabKind::Resize(handle))) => {
@@ -514,6 +637,28 @@ impl App {
     fn mouse_released(&mut self) {
         let preview = self.preview_for(self.cursor_frame);
         match std::mem::replace(&mut self.mode, Mode::Idle) {
+            Mode::Drawing { frame, start, .. } if self.tool == ToolKind::Measure => {
+                let line = Line::new(start, self.cursor);
+                let line = if self.shift_down {
+                    line.constrained()
+                } else {
+                    line
+                };
+                // A click with no drag is not a measurement; it would
+                // save a zero-length ruler nobody meant to make.
+                if line.length() >= f64::from(self.grab_tolerance()) {
+                    self.selections
+                        .add_measure(Measure::new(line, self.frames[frame].info.index));
+                    self.mark_dirty();
+                }
+            }
+            Mode::MeasureDragging {
+                index, original, ..
+            } => {
+                if self.selections.commit_measure(index, original) {
+                    self.mark_dirty();
+                }
+            }
             Mode::Drawing { frame, .. } => {
                 let shape = match (self.tool, preview) {
                     // A freehand stroke commits simplified: the jitter
@@ -578,6 +723,72 @@ impl App {
             self.redraw_frame(previous_frame);
         }
         self.redraw_frame(frame_idx);
+        self.update_active_gesture();
+    }
+
+    /// Open the label editor on whatever the cursor is over — the ruler
+    /// first, since the measure tool is the only way to reach one.
+    fn begin_label_edit(&mut self) {
+        let target = self.measure_at_cursor().map_or_else(
+            || {
+                self.hit_at_cursor()
+                    .map(|index| (EditTarget::Selection, index))
+            },
+            |index| Some((EditTarget::Measure, index)),
+        );
+        let Some((target, index)) = target else {
+            return;
+        };
+        let text = match target {
+            EditTarget::Selection => self.selections.items()[index].label.clone(),
+            EditTarget::Measure => self.selections.measures()[index].label.clone(),
+        };
+        self.mode = Mode::LabelEditing {
+            target,
+            index,
+            text,
+        };
+        self.caret_visible = true;
+        self.caret_deadline = Some(Instant::now() + CARET_BLINK);
+        self.redraw_all();
+    }
+
+    /// Where a measure drag puts the ruler, given what was grabbed.
+    fn dragged_measure(
+        &self,
+        grab: MeasureGrab,
+        original: Line,
+        grab_offset: Point,
+        frame: usize,
+    ) -> Line {
+        let MeasureGrab::Endpoint(is_a) = grab else {
+            let target = Point::new(self.cursor.x - grab_offset.x, self.cursor.y - grab_offset.y);
+            return original.translated(target.x - original.a.x, target.y - original.a.y);
+        };
+        let free = self.frames[frame].draw_rect().clamp_point(self.cursor);
+        let dragged = if is_a {
+            Line::new(free, original.b)
+        } else {
+            Line::new(original.a, free)
+        };
+        if !self.shift_down {
+            return dragged;
+        }
+        // `constrained` pivots on `a`, so dragging `a` needs the line
+        // reversed on the way in and back out — the endpoint under the
+        // hand is the one that must snap.
+        if is_a {
+            let snapped = Line::new(dragged.b, dragged.a).constrained();
+            Line::new(snapped.b, snapped.a)
+        } else {
+            dragged.constrained()
+        }
+    }
+
+    /// Advance whatever gesture is in flight to `self.cursor`. Split from
+    /// `cursor_moved` so headless tests can drive a drag by setting the
+    /// cursor, without a window to convert positions from.
+    fn update_active_gesture(&mut self) {
         match &mut self.mode {
             Mode::Drawing { frame, path, .. } => {
                 let frame = *frame;
@@ -637,6 +848,19 @@ impl App {
                 self.selections.set_shape_live(index, resized);
                 self.redraw_frame(frame);
             }
+            Mode::MeasureDragging {
+                frame,
+                index,
+                grab,
+                original,
+                grab_offset,
+            } => {
+                let (frame, index, grab, original, grab_offset) =
+                    (*frame, *index, *grab, *original, *grab_offset);
+                let moved = self.dragged_measure(grab, original, grab_offset, frame);
+                self.selections.set_measure_line_live(index, moved);
+                self.redraw_frame(frame);
+            }
             Mode::Idle => self.update_hover_cursor(),
             Mode::LabelEditing { .. } | Mode::SessionNaming { .. } => {}
         }
@@ -645,6 +869,20 @@ impl App {
     /// Cursor-icon feedback while idle: resize arrows on borders, a move
     /// cursor inside shapes, crosshair elsewhere.
     fn update_hover_cursor(&mut self) {
+        if self.tool == ToolKind::Measure {
+            let icon = match self.measure_at_cursor() {
+                Some(_) => CursorIcon::Move,
+                None if !self.frames[self.cursor_frame]
+                    .draw_rect()
+                    .contains(self.cursor) =>
+                {
+                    CursorIcon::NotAllowed
+                }
+                None => CursorIcon::Crosshair,
+            };
+            self.set_cursor_icon(icon);
+            return;
+        }
         let icon = match self.grab_at_cursor() {
             Some((index, GrabKind::Resize(handle))) => {
                 resize_icon(handle, &self.selections.items()[index].shape, self.cursor)
@@ -662,11 +900,16 @@ impl App {
             }
             None => CursorIcon::Crosshair,
         };
-        if icon != self.cursor_icon {
-            self.cursor_icon = icon;
-            if let Some(slot) = self.views.iter().find(|s| s.frame == self.cursor_frame) {
-                slot.view.set_cursor(icon);
-            }
+        self.set_cursor_icon(icon);
+    }
+
+    fn set_cursor_icon(&mut self, icon: CursorIcon) {
+        if icon == self.cursor_icon {
+            return;
+        }
+        self.cursor_icon = icon;
+        if let Some(slot) = self.views.iter().find(|s| s.frame == self.cursor_frame) {
+            slot.view.set_cursor(icon);
         }
     }
 
@@ -930,12 +1173,20 @@ impl App {
             return Release::Quit;
         }
         let monitor = self.frames[frame].info.index;
+        // Rulers count as marks: releasing a display they sit on would
+        // orphan a measurement with no way to see or delete it.
         let held = self
             .selections
             .items()
             .iter()
             .filter(|s| s.monitor == monitor)
-            .count();
+            .count()
+            + self
+                .selections
+                .measures()
+                .iter()
+                .filter(|m| m.monitor == monitor)
+                .count();
         if held > 0 {
             self.set_flash(
                 format!(
@@ -976,7 +1227,10 @@ impl App {
         // filtering them would be guesswork about what a half-valid history
         // means. Truncating matches resume, where the reopen point is the
         // floor.
-        self.selections = SelectionSet::seed(self.selections.items().to_vec());
+        self.selections = SelectionSet::seed(
+            self.selections.items().to_vec(),
+            self.selections.measures().to_vec(),
+        );
         self.set_flash(self.strings.hud_released.to_string(), FLASH_SAVE);
         self.redraw_all();
         Release::Done
@@ -999,6 +1253,17 @@ impl App {
         match action {
             Action::Quit => self.request_quit(event_loop),
             Action::ReleaseMonitor => self.release_frame(event_loop, self.cursor_frame),
+            other => self.apply_local_action(other),
+        }
+    }
+
+    /// Every action that does not need the event loop — which is every
+    /// action except quitting and releasing a monitor. Split out so the
+    /// keyboard surface is reachable from headless tests.
+    fn apply_local_action(&mut self, action: Action) {
+        match action {
+            // Intercepted above; listed so the match stays exhaustive.
+            Action::Quit | Action::ReleaseMonitor => {}
             Action::Save => self.save(),
             Action::NextTool => {
                 // The mid-gesture gate guarantees Idle here.
@@ -1011,25 +1276,22 @@ impl App {
                     ToolKind::Polygon => "TOOL: POLYGON",
                     ToolKind::Freehand => "TOOL: FREEHAND",
                     ToolKind::Poly => "TOOL: POLY",
+                    ToolKind::Measure => "TOOL: MEASURE",
                 };
                 self.set_flash(name.to_string(), FLASH_TOOL);
             }
             Action::DeleteAtCursor => {
-                if let Some(index) = self.hit_at_cursor() {
+                if let Some(index) = self.measure_at_cursor() {
+                    self.selections.delete_measure(index);
+                    self.mark_dirty();
+                    self.redraw_all();
+                } else if let Some(index) = self.hit_at_cursor() {
                     self.selections.delete(index);
                     self.mark_dirty();
                     self.redraw_all();
                 }
             }
-            Action::LabelEditAtCursor => {
-                if let Some(index) = self.hit_at_cursor() {
-                    let text = self.selections.items()[index].label.clone();
-                    self.mode = Mode::LabelEditing { index, text };
-                    self.caret_visible = true;
-                    self.caret_deadline = Some(Instant::now() + CARET_BLINK);
-                    self.redraw_all();
-                }
-            }
+            Action::LabelEditAtCursor => self.begin_label_edit(),
             Action::RotateCcw | Action::RotateCw => {
                 if let Some(index) = self.hit_at_cursor() {
                     let step = if self.shift_down { 15 } else { 1 };
@@ -1608,6 +1870,36 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_holding_only_a_ruler_still_refuses_release() {
+        let mut app = test_app_multi();
+        app.selections.add_measure(Measure::new(
+            Line::new(Point::new(1, 1), Point::new(20, 20)),
+            app.frames[1].info.index,
+        ));
+
+        assert_eq!(app.try_release_frame(1), Release::Blocked);
+        assert_eq!(app.frames.len(), 3, "nothing was released");
+    }
+
+    #[test]
+    fn releasing_a_frame_keeps_the_rulers_on_the_others() {
+        let mut app = test_app_multi();
+        let kept = Measure::new(
+            Line::new(Point::new(1, 1), Point::new(20, 20)),
+            app.frames[0].info.index,
+        );
+        app.selections.add_measure(kept.clone());
+
+        assert_eq!(app.try_release_frame(1), Release::Done);
+
+        assert_eq!(
+            app.selections.measures(),
+            [kept],
+            "reseeding must not drop what the released display never held"
+        );
+    }
+
+    #[test]
     fn the_last_frame_quits_instead_of_releasing() {
         let mut app = test_app();
         assert_eq!(app.try_release_frame(0), Release::Quit);
@@ -1662,6 +1954,152 @@ mod tests {
         assert_eq!(app.selections.len(), 1);
         assert_eq!(app.selections.items()[0].shape, rect(10, 10, 30, 30));
         assert!(app.dirty);
+    }
+
+    #[test]
+    fn measure_gesture_commits_a_ruler_not_a_shape() {
+        let mut app = test_app();
+        app.tool = ToolKind::Measure;
+        app.cursor = Point::new(10, 10);
+        app.mouse_pressed();
+        assert!(matches!(app.mode, Mode::Drawing { .. }));
+        app.cursor = Point::new(40, 50);
+        assert_eq!(
+            app.measure_preview(0),
+            Some(Line::new(Point::new(10, 10), Point::new(40, 50)))
+        );
+        app.mouse_released();
+
+        assert!(app.selections.is_empty(), "a ruler is not a selection");
+        assert_eq!(app.selections.measures().len(), 1);
+        assert_eq!(
+            app.selections.measures()[0].line,
+            Line::new(Point::new(10, 10), Point::new(40, 50))
+        );
+        assert!(app.dirty);
+    }
+
+    #[test]
+    fn a_measure_click_without_a_drag_commits_nothing() {
+        let mut app = test_app();
+        app.tool = ToolKind::Measure;
+        app.cursor = Point::new(10, 10);
+        app.mouse_pressed();
+        app.cursor = Point::new(12, 11); // shorter than the grab tolerance
+        app.mouse_released();
+        assert!(app.selections.measures().is_empty());
+        assert!(!app.dirty);
+    }
+
+    #[test]
+    fn shift_constrains_a_measure_to_45_degrees() {
+        let mut app = test_app();
+        app.tool = ToolKind::Measure;
+        app.shift_down = true;
+        app.cursor = Point::new(10, 10);
+        app.mouse_pressed();
+        app.cursor = Point::new(50, 12); // nearly horizontal
+        app.mouse_released();
+        let line = app.selections.measures()[0].line;
+        assert_eq!(line.b.y, 10, "snapped flat: {line:?}");
+    }
+
+    #[test]
+    fn dragging_a_measure_endpoint_moves_only_that_end() {
+        let mut app = test_app();
+        app.tool = ToolKind::Measure;
+        let line = Line::new(Point::new(10, 10), Point::new(50, 10));
+        app.selections.add_measure(Measure::new(line, 0));
+        app.dirty = false;
+
+        app.cursor = Point::new(10, 10);
+        app.mouse_pressed();
+        assert!(matches!(
+            app.mode,
+            Mode::MeasureDragging {
+                grab: MeasureGrab::Endpoint(true),
+                ..
+            }
+        ));
+        app.cursor = Point::new(10, 40);
+        app.update_active_gesture();
+        app.mouse_released();
+
+        let moved = app.selections.measures()[0].line;
+        assert_eq!(moved, Line::new(Point::new(10, 40), Point::new(50, 10)));
+        assert!(app.dirty);
+    }
+
+    #[test]
+    fn dragging_a_measures_body_translates_it_whole() {
+        let mut app = test_app();
+        app.tool = ToolKind::Measure;
+        let line = Line::new(Point::new(10, 10), Point::new(50, 10));
+        app.selections.add_measure(Measure::new(line, 0));
+
+        app.cursor = Point::new(30, 10);
+        app.mouse_pressed();
+        assert!(matches!(
+            app.mode,
+            Mode::MeasureDragging {
+                grab: MeasureGrab::Move,
+                ..
+            }
+        ));
+        app.cursor = Point::new(35, 20);
+        app.update_active_gesture();
+        app.mouse_released();
+
+        assert_eq!(
+            app.selections.measures()[0].line,
+            Line::new(Point::new(15, 20), Point::new(55, 20)),
+            "length and angle survive a move"
+        );
+    }
+
+    #[test]
+    fn measure_keys_reach_rulers_only_while_the_measure_tool_is_active() {
+        let mut app = test_app();
+        app.selections.add_measure(Measure::new(
+            Line::new(Point::new(10, 10), Point::new(50, 10)),
+            0,
+        ));
+        app.cursor = Point::new(30, 10);
+
+        // Rect tool: the ruler is inert, so D and A belong to shapes.
+        assert_eq!(app.measure_at_cursor(), None);
+        app.tool = ToolKind::Measure;
+        assert_eq!(app.measure_at_cursor(), Some(0));
+    }
+
+    #[test]
+    fn deleting_and_labeling_at_the_cursor_reach_the_measure_under_it() {
+        let mut app = test_app();
+        app.tool = ToolKind::Measure;
+        app.selections.add_measure(Measure::new(
+            Line::new(Point::new(10, 10), Point::new(50, 10)),
+            0,
+        ));
+        app.cursor = Point::new(30, 10);
+
+        app.apply_local_action(Action::LabelEditAtCursor);
+        assert!(matches!(
+            app.mode,
+            Mode::LabelEditing {
+                target: EditTarget::Measure,
+                index: 0,
+                ..
+            }
+        ));
+        let Mode::LabelEditing { text, .. } = &mut app.mode else {
+            unreachable!()
+        };
+        text.push_str("gap");
+        app.commit_label();
+        assert_eq!(app.selections.measures()[0].label, "gap");
+
+        app.apply_local_action(Action::DeleteAtCursor);
+        assert!(app.selections.measures().is_empty());
     }
 
     #[test]
@@ -1746,6 +2184,7 @@ mod tests {
         app.selections.add(Selection::new(rect(10, 10, 30, 30), 0));
         app.dirty = false;
         app.mode = Mode::LabelEditing {
+            target: EditTarget::Selection,
             index: 0,
             text: "target".into(),
         };
@@ -1755,6 +2194,7 @@ mod tests {
 
         app.dirty = false;
         app.mode = Mode::LabelEditing {
+            target: EditTarget::Selection,
             index: 0,
             text: "target".into(),
         };

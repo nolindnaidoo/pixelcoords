@@ -52,6 +52,53 @@ pub struct SessionFile {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub target: Option<TargetRecord>,
     pub selections: Vec<SelectionRecord>,
+    /// Two-point measurements, when any were taken. A separate top-level
+    /// array rather than a shape kind: a measure has no interior, so
+    /// every consumer of `selections` would have to special-case one.
+    /// Additive and omitted when empty, so the schema does not move and
+    /// sessions without measures look exactly as they always did.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub measures: Vec<MeasureRecord>,
+}
+
+/// One measurement, with its derived values precomputed so a consumer
+/// never re-derives geometry to read a number off a ruler.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MeasureRecord {
+    pub label: String,
+    pub monitor: usize,
+    /// Endpoints in monitor-local physical pixels.
+    pub px: LineRecord,
+    /// The same endpoints on the global desktop grid.
+    pub global_px: LineRecord,
+    pub length_px: f64,
+    pub dx: i32,
+    pub dy: i32,
+    /// Degrees in `[0, 360)`, `0` pointing right along +X, increasing
+    /// clockwise because screen Y grows downward.
+    pub angle_deg: f64,
+}
+
+/// A measure's two endpoints, flat rather than nested, so a consumer
+/// reads `ax` instead of `a.x` for a thing that is always exactly two
+/// points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineRecord {
+    pub ax: i32,
+    pub ay: i32,
+    pub bx: i32,
+    pub by: i32,
+}
+
+impl From<crate::geometry::Line> for LineRecord {
+    fn from(line: crate::geometry::Line) -> Self {
+        Self {
+            ax: line.a.x,
+            ay: line.a.y,
+            bx: line.b.x,
+            by: line.b.y,
+        }
+    }
 }
 
 /// The `--target` window as it stood at the instant of the freeze.
@@ -238,6 +285,7 @@ impl SessionFile {
             monitors,
             target,
             selections: records,
+            measures: Vec::new(),
         }
     }
 
@@ -254,6 +302,39 @@ impl SessionFile {
         self.platform = platform;
         self.capture = capture;
         self.name = name;
+        self
+    }
+
+    /// Attach the session's measurements, converting each to global
+    /// coordinates through its own monitor's origin and precomputing the
+    /// derived values.
+    ///
+    /// A builder rather than an argument to `build` for the same reason
+    /// the colors are: a session without measures is an ordinary session,
+    /// so it cannot be required of every caller.
+    #[must_use]
+    pub fn with_measures(mut self, measures: &[crate::selection::Measure]) -> Self {
+        self.measures = measures
+            .iter()
+            .map(|m| {
+                let origin = self
+                    .monitors
+                    .iter()
+                    .find(|mon| mon.index == m.monitor)
+                    .map_or(Point::new(0, 0), |mon| mon.origin_px);
+                let (dx, dy) = m.line.delta();
+                MeasureRecord {
+                    label: m.label.clone(),
+                    monitor: m.monitor,
+                    px: m.line.into(),
+                    global_px: m.line.translated(origin.x, origin.y).into(),
+                    length_px: m.line.length(),
+                    dx,
+                    dy,
+                    angle_deg: m.line.angle_deg(),
+                }
+            })
+            .collect();
         self
     }
 
@@ -328,6 +409,29 @@ pub fn restore_selections(file: &SessionFile) -> (Vec<Selection>, Vec<String>) {
     (kept, dropped)
 }
 
+/// The measures a saved session carries, back as editable rulers.
+///
+/// Unlike `restore_selections` this drops nothing: a measure has no crop
+/// to orphan and no window-relative frame to fall outside of, so there is
+/// nothing a target session could invalidate. Derived values are
+/// recomputed from the endpoints on the next save rather than trusted, so
+/// a hand-edited file cannot smuggle a length that does not match its
+/// line.
+#[must_use]
+pub fn restore_measures(file: &SessionFile) -> Vec<crate::selection::Measure> {
+    file.measures
+        .iter()
+        .map(|record| crate::selection::Measure {
+            line: crate::geometry::Line::new(
+                Point::new(record.px.ax, record.px.ay),
+                Point::new(record.px.bx, record.px.by),
+            ),
+            label: record.label.clone(),
+            monitor: record.monitor,
+        })
+        .collect()
+}
+
 /// The selections a `--label` restricts to, paired with their index in
 /// the session — the identity every report row carries. `None` selects
 /// everything. Matching is ASCII case-insensitive, as the window matcher
@@ -375,6 +479,113 @@ pub fn distinct_labels<'a>(records: impl Iterator<Item = &'a SelectionRecord>) -
 mod tests {
     use super::*;
     use crate::geometry::Rect;
+
+    #[test]
+    fn measures_are_absent_from_a_session_that_has_none() {
+        let file = labeled(&["submit"]);
+        let json = serde_json::to_value(&file).unwrap();
+        assert!(
+            json.get("measures").is_none(),
+            "a session without measures must look exactly as it always did"
+        );
+        assert_eq!(json["schema"], 1);
+    }
+
+    #[test]
+    fn a_measure_records_its_globals_and_derived_values() {
+        use crate::geometry::Line;
+        use crate::selection::Measure;
+        // Monitor 1 sits at global x=1920, so the local ruler at x=100
+        // reports globals 1920 higher.
+        let mut m = Measure::new(Line::new(Point::new(100, 80), Point::new(262, 80)), 1);
+        m.label = "toolbar-gap".into();
+        let file = SessionFile::build(
+            "test",
+            "2026-08-01T00:00:00Z".into(),
+            vec![monitor(0, 0, 0), monitor(1, 1920, 0)],
+            &[],
+            &[],
+            None,
+        )
+        .with_measures(&[m]);
+
+        let json = serde_json::to_value(&file).unwrap();
+        let rec = &json["measures"][0];
+        assert_eq!(rec["label"], "toolbar-gap");
+        assert_eq!(rec["monitor"], 1);
+        assert_eq!(rec["px"]["ax"], 100);
+        assert_eq!(rec["global_px"]["ax"], 2020, "origin added");
+        assert_eq!(rec["global_px"]["bx"], 2182);
+        assert_eq!(rec["dx"], 162);
+        assert_eq!(rec["dy"], 0);
+        assert_eq!(rec["length_px"], 162.0);
+        assert_eq!(rec["angle_deg"], 0.0);
+        assert_eq!(json["schema"], 1, "measures are additive");
+    }
+
+    #[test]
+    fn stored_derived_values_match_recomputing_them() {
+        use crate::geometry::Line;
+        use crate::selection::Measure;
+        // The reason they are stored at all is so a consumer never has to
+        // re-derive geometry — which is only safe if they agree.
+        let line = Line::new(Point::new(-30, 12), Point::new(45, -60));
+        let file = SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None)
+            .with_measures(&[Measure::new(line, 0)]);
+        let rec = &file.measures[0];
+        assert!((rec.length_px - line.length()).abs() < f64::EPSILON);
+        assert!((rec.angle_deg - line.angle_deg()).abs() < f64::EPSILON);
+        assert_eq!((rec.dx, rec.dy), line.delta());
+    }
+
+    #[test]
+    fn restoring_measures_recovers_every_ruler_and_recomputes_nothing_wrong() {
+        let base =
+            || SessionFile::build("test", "t".into(), vec![monitor(0, 100, 0)], &[], &[], None);
+        let file = base().with_measures(&[
+            crate::selection::Measure::new(
+                crate::geometry::Line::new(Point::new(10, 20), Point::new(40, 60)),
+                0,
+            ),
+            crate::selection::Measure {
+                line: crate::geometry::Line::new(Point::new(1, 2), Point::new(3, 4)),
+                label: "gutter".into(),
+                monitor: 0,
+            },
+        ]);
+
+        let restored = restore_measures(&file);
+
+        assert_eq!(restored.len(), 2);
+        assert_eq!(
+            restored[0].line,
+            crate::geometry::Line::new(Point::new(10, 20), Point::new(40, 60)),
+            "monitor-local endpoints, not the global ones"
+        );
+        assert_eq!(restored[1].label, "gutter");
+        // A resave reproduces the same records: the round trip is closed.
+        assert_eq!(base().with_measures(&restored).measures, file.measures);
+    }
+
+    #[test]
+    fn restoring_a_session_without_measures_yields_none() {
+        let file = SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None);
+        assert!(restore_measures(&file).is_empty());
+    }
+
+    #[test]
+    fn a_session_with_measures_round_trips() {
+        use crate::geometry::Line;
+        use crate::selection::Measure;
+        let file = SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None)
+            .with_measures(&[Measure::new(
+                Line::new(Point::new(1, 2), Point::new(3, 4)),
+                0,
+            )]);
+        let text = serde_json::to_string(&file).unwrap();
+        let back: SessionFile = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, file);
+    }
 
     fn monitor(index: usize, ox: i32, oy: i32) -> MonitorRecord {
         MonitorRecord {

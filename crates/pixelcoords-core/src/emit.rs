@@ -302,6 +302,10 @@ fn describe(index: usize, record: &SelectionRecord) -> String {
         | crate::geometry::ToolKind::Freehand
         | crate::geometry::ToolKind::Poly => "poly",
         crate::geometry::ToolKind::Triangle => "triangle",
+        // A measure is never stored as a selection — it lives in the
+        // session's `measures` array — so this arm exists to keep the
+        // match total, not because it can be reached.
+        crate::geometry::ToolKind::Measure => "measure",
     };
     if record.label.is_empty() {
         return format!("selection {index} — {shape} on monitor {}", record.monitor);
