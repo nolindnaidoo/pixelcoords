@@ -162,7 +162,49 @@ no-ops.
 edit in progress (never quits), `Enter` commits a label, `Backspace`
 deletes while labeling.
 
-## Limits and resources
+## Limits and comfort
+
+Two tables. `[limits]` bounds what a session may hold; `[overlay]` is how
+the overlay feels and changes nothing that is saved.
+
+```toml
+[limits]
+label_length = 64          # characters
+
+[overlay]
+polygon_sides = 6          # sides the polygon tool opens on
+grab_tolerance = 6         # logical px, scaled per monitor
+loupe_radius = 15          # the magnifier shows a 2r+1 pixel square
+flash_ms = 2500            # saves and errors
+flash_brief_ms = 1200      # tool switches
+caret_blink_ms = 500       # 0 stops the blink
+```
+
+Absent tables are the defaults above, so a config that predates them
+behaves exactly as it did. Out-of-range values are errors naming the
+field, like every other table here.
+
+**`polygon_sides` is the one to know about.** The digit keys reach 3 to 9
+because that is what a single keypress can express — this is how you get
+a 24-gon. Anything up to 1000 works; past a few hundred at any real
+screen size the vertices land on the same pixels.
+
+**`caret_blink_ms = 0` stops the blink** and leaves the caret solid. That
+is a supported value rather than an accident of the arithmetic, because a
+blinking caret is a real problem for some people. `flash_brief_ms` is the
+other accessibility knob: 1.2 seconds is not long enough for everyone to
+read a tool-switch message.
+
+**`label_length` has a ceiling of 80**, and the number is derived rather
+than chosen. A label becomes `crop-<index>-<slug>.png`; the slug is one
+ASCII byte per character, `char::to_lowercase` can turn one character
+into three, and filesystems stop at 255 bytes:
+
+```text
+"crop-" (5) + index (5) + "-" (1) + 3 x label + ".png" (4)  <=  255
+```
+
+## Resources
 
 Two lists, and the second is the more useful one.
 
@@ -188,15 +230,18 @@ tool will not decide for you.
 
 ### What has a ceiling, and why
 
-Each of these refuses out-of-range values loudly, naming the field. The
-numbers are current defaults rather than permanent truths.
+Each refuses out-of-range values loudly, naming the field. Most are now
+defaults you can change — the "ceiling" column is the hard limit behind
+the knob, and the reason it exists. `[snap] radius` and `[style]
+thickness` are the two that are still fixed bounds on a value you set
+directly, which is why they read differently.
 
 | Setting | Ceiling | The reason behind the number |
 |---|---|---|
 | `[snap] radius` | 64 logical px | Scoring is O(radius²) — about 15µs per query at radius 16 on a 3600×2338 frame. Past roughly 100 the pointer visibly lags, so this is a cost curve, not a preference |
 | `[style] thickness` | 512 px | Nothing breaks above it; the bound exists to catch a typo in a value you are already setting by hand |
-| Label length | 64 characters | A label becomes part of a crop's filename, and most filesystems stop at 255 bytes. Enforced when you type and when a session is read |
-| Polygon sides | 1000 | Past a few hundred at any real screen size the vertices land on the same pixels. Some ceiling has to exist because the count is a per-vertex allocation. The overlay reaches 3–9, which is the digit keys' reach rather than the shape's limit |
+| `[limits] label_length` | 64, ceiling 80 | Derived from what a crop's filename can be — see above |
+| `[overlay] polygon_sides` | 6, ceiling 1000 | Past a few hundred the vertices land on the same pixels, and the count is a per-vertex allocation |
 
 A cap you hit is a bug report; a cost you chose is a feature. Where a
 number above is a genuine cost, it is stated so you can decide. Where it

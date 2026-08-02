@@ -29,6 +29,27 @@ fill = false               # fill shapes instead of outlining
 enabled = true             # snapping starts on
 radius = 8                 # search distance in logical px (1-64)
 
+# Constraints on what a session may hold. Separate from [overlay] below
+# because these bound the data, not the feel.
+[limits]
+label_length = 64          # characters; the ceiling is 80, set by what a
+                           # crop's filename can be rather than by taste
+
+# How the overlay feels. None of these change what is saved — the right
+# number is a matter of hand, screen, and eyesight.
+[overlay]
+polygon_sides = 6          # sides the polygon tool opens on. The digit
+                           # keys reach 3-9 because that is what one
+                           # keypress can say; set anything up to 1000 here
+grab_tolerance = 6         # logical px, scaled per monitor. Larger is
+                           # easier on a trackpad and makes small shapes
+                           # harder to click inside
+loupe_radius = 15          # the magnifier shows a 2r+1 pixel square, so
+                           # larger trades magnification for context
+flash_ms = 2500            # saves and errors — the messages worth reading
+flash_brief_ms = 1200      # tool switches — the ones you already know
+caret_blink_ms = 500       # 0 stops the blink and leaves the caret solid
+
 # Extra key bindings; later entries override earlier ones (and these
 # override the defaults). ACTIONS: quit, save, next_tool, delete_at_cursor,
 # label_edit_at_cursor, undo, redo, cycle_overlap, toggle_panel,

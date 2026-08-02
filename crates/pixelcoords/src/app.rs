@@ -9,12 +9,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use image::RgbaImage;
-use pixelcoords_core::config::{SnapSettings, Style};
+use pixelcoords_core::config::{LimitsConfig, OverlaySettings, SnapSettings, Style};
 use pixelcoords_core::geometry::{Line, Point, Rect, ResizeHandle, Shape, Size, ToolKind};
 use pixelcoords_core::hotkeys::{Action, Binding, Edge, KeyName, OverlayState, match_event};
 use pixelcoords_core::locate::GrayImage;
 use pixelcoords_core::selection::{GrabKind, Measure, MeasureGrab, Selection, SelectionSet};
-use pixelcoords_core::session::{MAX_LABEL_LEN, TargetRecord};
+use pixelcoords_core::session::TargetRecord;
 use pixelcoords_core::snap::{EdgeMap, Snap};
 use pixelcoords_core::strings::{EN, Strings};
 use winit::application::ApplicationHandler;
@@ -26,12 +26,6 @@ use winit::window::{CursorIcon, WindowId};
 use crate::capture::MonitorInfo;
 use crate::render::{self, FrameState};
 use crate::view::{OverlayView, Presentation};
-
-const CARET_BLINK: Duration = Duration::from_millis(500);
-const FLASH_SAVE: Duration = Duration::from_millis(2500);
-const FLASH_TOOL: Duration = Duration::from_millis(1200);
-/// Border-grab tolerance in logical pixels (scaled per monitor).
-const GRAB_TOLERANCE: i32 = 6;
 
 /// One captured monitor: its metadata, the frozen frame, and the derived
 /// presentation data.
@@ -223,6 +217,11 @@ pub struct App {
     /// Resolved config; `enabled` is the live state, flipped by the
     /// toggle key and deliberately not persisted.
     snap: SnapSettings,
+    /// How the overlay feels: reach, magnification, and how long it
+    /// talks. Every value here used to be a constant in this file.
+    overlay: OverlaySettings,
+    /// Constraints on what a session may hold.
+    limits: LimitsConfig,
     /// What the in-flight gesture snapped to, kept so the overlay can
     /// draw the edge that captured the point. Cleared on release.
     snap_hit: Snap,
@@ -264,7 +263,7 @@ impl App {
             panel_held: false,
             panel_hidden: false,
             loupe_held: false,
-            polygon_sides: 6,
+            polygon_sides: OverlaySettings::default().polygon_sides,
             panel_origin: None,
             dirty: false,
             saved_once: false,
@@ -276,9 +275,20 @@ impl App {
             error: None,
             warned_render_failure: false,
             snap: SnapSettings::default(),
+            overlay: OverlaySettings::default(),
+            limits: LimitsConfig::default(),
             snap_hit: Snap::default(),
             gesture_cursor: Point::new(0, 0),
         }
+    }
+
+    /// Adopt the resolved comfort values and limits. The polygon tool
+    /// opens on the configured side count, which is how anything past the
+    /// digit keys' 3-to-9 is reachable at all.
+    pub fn set_overlay(&mut self, overlay: OverlaySettings, limits: LimitsConfig) {
+        self.overlay = overlay;
+        self.limits = limits;
+        self.polygon_sides = overlay.polygon_sides;
     }
 
     /// Adopt resolved snapping settings, warming each frame's edge map
@@ -556,6 +566,7 @@ impl App {
             polygon_sides: self.polygon_sides,
             cursor: (frame_idx == self.cursor_frame).then_some(self.cursor),
             loupe: self.loupe_held,
+            loupe_radius: self.overlay.loupe_radius,
             naming,
         };
         let background = &frame.background;
@@ -598,8 +609,16 @@ impl App {
         self.caret_deadline = None;
     }
 
+    /// When the caret should next flip, or `None` when the blink is
+    /// switched off. A `None` deadline is already how this file says
+    /// "stop blinking", so `caret_blink_ms = 0` needs no special case
+    /// anywhere else — the caret simply stays solid.
+    fn caret_deadline_from_now(&self) -> Option<Instant> {
+        self.overlay.caret_blink.map(|every| Instant::now() + every)
+    }
+
     fn grab_tolerance(&self) -> i32 {
-        GRAB_TOLERANCE * self.frames[self.cursor_frame].ui_scale
+        self.overlay.grab_tolerance * self.frames[self.cursor_frame].ui_scale
     }
 
     /// The measure under the cursor, but only while the measure tool is
@@ -843,7 +862,7 @@ impl App {
             text,
         };
         self.caret_visible = true;
-        self.caret_deadline = Some(Instant::now() + CARET_BLINK);
+        self.caret_deadline = self.caret_deadline_from_now();
         self.redraw_all();
     }
 
@@ -1106,7 +1125,7 @@ impl App {
             && (3..=9).contains(&d)
         {
             self.polygon_sides = d;
-            self.set_flash(format!("Polygon sides: {d}"), FLASH_TOOL);
+            self.set_flash(format!("Polygon sides: {d}"), self.overlay.flash_brief);
             return None;
         }
 
@@ -1151,6 +1170,7 @@ impl App {
     }
 
     fn label_editor_key(&mut self, key: &Keystroke) {
+        let limit = self.limits.label_length;
         let Mode::LabelEditing { text, .. } = &mut self.mode else {
             return;
         };
@@ -1164,20 +1184,21 @@ impl App {
                 text.pop();
             }
             _ => {
-                if append_typed(text, key.text.as_deref()) {
+                if append_typed(text, key.text.as_deref(), limit) {
                     self.set_flash(
-                        format!("Label limit {MAX_LABEL_LEN} characters"),
-                        FLASH_TOOL,
+                        format!("Label limit {limit} characters"),
+                        self.overlay.flash_brief,
                     );
                 }
             }
         }
         self.caret_visible = true;
-        self.caret_deadline = Some(Instant::now() + CARET_BLINK);
+        self.caret_deadline = self.caret_deadline_from_now();
         self.redraw_all();
     }
 
     fn name_editor_key(&mut self, key: &Keystroke) {
+        let limit = self.limits.label_length;
         let Mode::SessionNaming { text } = &mut self.mode else {
             return;
         };
@@ -1191,16 +1212,16 @@ impl App {
                 text.pop();
             }
             _ => {
-                if append_typed(text, key.text.as_deref()) {
+                if append_typed(text, key.text.as_deref(), limit) {
                     self.set_flash(
-                        format!("Label limit {MAX_LABEL_LEN} characters"),
-                        FLASH_TOOL,
+                        format!("Label limit {limit} characters"),
+                        self.overlay.flash_brief,
                     );
                 }
             }
         }
         self.caret_visible = true;
-        self.caret_deadline = Some(Instant::now() + CARET_BLINK);
+        self.caret_deadline = self.caret_deadline_from_now();
         self.redraw_all();
     }
 
@@ -1221,7 +1242,7 @@ impl App {
         };
         self.session_meta.name = name;
         self.mark_dirty();
-        self.set_flash(message, FLASH_SAVE);
+        self.set_flash(message, self.overlay.flash);
     }
 
     /// Re-apply the resize constraint when Shift is pressed or released
@@ -1333,7 +1354,7 @@ impl App {
                     self.strings.hud_release_blocked_prefix,
                     self.strings.hud_release_blocked_suffix
                 ),
-                FLASH_SAVE,
+                self.overlay.flash,
             );
             return Release::Blocked;
         }
@@ -1370,7 +1391,7 @@ impl App {
             self.selections.items().to_vec(),
             self.selections.measures().to_vec(),
         );
-        self.set_flash(self.strings.hud_released.to_string(), FLASH_SAVE);
+        self.set_flash(self.strings.hud_released.to_string(), self.overlay.flash);
         self.redraw_all();
         Release::Done
     }
@@ -1381,8 +1402,11 @@ impl App {
             .quit_armed_until
             .is_some_and(|until| Instant::now() < until);
         if unsaved && !armed {
-            self.quit_armed_until = Some(Instant::now() + FLASH_SAVE);
-            self.set_flash(self.strings.hud_quit_unsaved.to_string(), FLASH_SAVE);
+            self.quit_armed_until = Some(Instant::now() + self.overlay.flash);
+            self.set_flash(
+                self.strings.hud_quit_unsaved.to_string(),
+                self.overlay.flash,
+            );
             return;
         }
         event_loop.exit();
@@ -1417,7 +1441,7 @@ impl App {
                     ToolKind::Poly => "TOOL: POLY",
                     ToolKind::Measure => "TOOL: MEASURE",
                 };
-                self.set_flash(name.to_string(), FLASH_TOOL);
+                self.set_flash(name.to_string(), self.overlay.flash_brief);
             }
             Action::DeleteAtCursor => {
                 if let Some(index) = self.measure_at_cursor() {
@@ -1441,7 +1465,7 @@ impl App {
                     };
                     if let Some(deg) = self.selections.rotate(index, delta) {
                         self.mark_dirty();
-                        self.set_flash(format!("ROTATION {deg}"), FLASH_TOOL);
+                        self.set_flash(format!("ROTATION {deg}"), self.overlay.flash_brief);
                     }
                 }
             }
@@ -1464,7 +1488,7 @@ impl App {
                     text: self.session_meta.name.clone().unwrap_or_default(),
                 };
                 self.caret_visible = true;
-                self.caret_deadline = Some(Instant::now() + CARET_BLINK);
+                self.caret_deadline = self.caret_deadline_from_now();
                 self.redraw_all();
             }
             Action::ToggleSnap => {
@@ -1481,14 +1505,17 @@ impl App {
                 } else {
                     self.strings.hud_snap_off
                 };
-                self.set_flash(message.to_string(), FLASH_TOOL);
+                self.set_flash(message.to_string(), self.overlay.flash_brief);
                 self.redraw_all();
             }
             Action::TogglePanel => {
                 self.panel_hidden = !self.panel_hidden;
                 if self.panel_hidden {
                     // A fading hint, so hiding is never a trap.
-                    self.set_flash("H shows the panel again".to_string(), FLASH_TOOL);
+                    self.set_flash(
+                        "H shows the panel again".to_string(),
+                        self.overlay.flash_brief,
+                    );
                 }
                 self.redraw_all();
             }
@@ -1526,7 +1553,7 @@ impl App {
                     outcome.json_path.display()
                 );
                 self.last_crops = outcome.crops;
-                self.set_flash(message, FLASH_SAVE);
+                self.set_flash(message, self.overlay.flash);
             }
             Err(e) => {
                 log::error!("save failed: {e:#}");
@@ -1536,7 +1563,7 @@ impl App {
                 // outermost context ("writing crop-0.png" alone says
                 // nothing about a full disk).
                 let message = format!("{}{e:#}", self.strings.hud_save_failed_prefix);
-                self.set_flash(message, FLASH_SAVE);
+                self.set_flash(message, self.overlay.flash);
             }
         }
     }
@@ -1608,7 +1635,7 @@ impl ApplicationHandler for App {
             && self.caret_deadline.is_some_and(|d| d <= now)
         {
             self.caret_visible = !self.caret_visible;
-            self.caret_deadline = Some(now + CARET_BLINK);
+            self.caret_deadline = self.overlay.caret_blink.map(|every| now + every);
             self.redraw_all();
         }
         if self.flash.as_ref().is_some_and(|(_, until)| *until <= now) {
@@ -1739,13 +1766,13 @@ fn resize_icon(handle: ResizeHandle, shape: &Shape, cursor: Point) -> CursorIcon
 /// say so. A keystroke that vanishes with nothing on screen reads as a
 /// dropped input rather than a limit — the same silent refusal this
 /// project rejects everywhere else.
-fn append_typed(text: &mut String, typed: Option<&str>) -> bool {
+fn append_typed(text: &mut String, typed: Option<&str>, limit: usize) -> bool {
     let Some(typed) = typed else {
         return false;
     };
     let mut refused = false;
     for c in typed.chars().filter(|c| !c.is_control()) {
-        if text.chars().count() >= MAX_LABEL_LEN {
+        if text.chars().count() >= limit {
             refused = true;
             break;
         }
@@ -2505,13 +2532,14 @@ mod tests {
             index: 0,
             text: String::new(),
         };
-        for _ in 0..MAX_LABEL_LEN + 20 {
+        let limit = app.limits.label_length;
+        for _ in 0..limit + 20 {
             app.handle_key(&typed("x"));
         }
         let Mode::LabelEditing { text, .. } = &app.mode else {
             panic!("still editing")
         };
-        assert_eq!(text.chars().count(), MAX_LABEL_LEN);
+        assert_eq!(text.chars().count(), limit);
     }
 
     #[test]
@@ -2721,7 +2749,7 @@ mod tests {
         app.mode = Mode::LabelEditing {
             target: EditTarget::Selection,
             index: 0,
-            text: "x".repeat(MAX_LABEL_LEN - 1),
+            text: "x".repeat(app.limits.label_length - 1),
         };
 
         app.handle_key(&typed("y"));
@@ -2741,14 +2769,14 @@ mod tests {
     #[test]
     fn append_typed_reports_whether_it_refused_anything() {
         let mut text = String::new();
-        assert!(!append_typed(&mut text, Some("fits")));
-        let mut full = "x".repeat(MAX_LABEL_LEN);
-        assert!(append_typed(&mut full, Some("more")));
-        assert_eq!(full.chars().count(), MAX_LABEL_LEN);
+        assert!(!append_typed(&mut text, Some("fits"), 64));
+        let mut full = "x".repeat(64);
+        assert!(append_typed(&mut full, Some("more"), 64));
+        assert_eq!(full.chars().count(), 64);
         // Control characters are dropped, but dropping them is not a
         // refusal — nothing was turned away for being too long.
         let mut text = String::new();
-        assert!(!append_typed(&mut text, Some("a\u{7}b")));
+        assert!(!append_typed(&mut text, Some("a\u{7}b"), 64));
         assert_eq!(text, "ab");
     }
 
@@ -2968,24 +2996,25 @@ mod tests {
 
     #[test]
     fn typed_text_stops_at_the_label_cap() {
-        let mut text = "x".repeat(MAX_LABEL_LEN - 1);
-        append_typed(&mut text, Some("ab"));
-        assert_eq!(text.chars().count(), MAX_LABEL_LEN);
-        append_typed(&mut text, Some("cd"));
-        assert_eq!(text.chars().count(), MAX_LABEL_LEN, "cap is not exceeded");
+        const CAP: usize = 64;
+        let mut text = "x".repeat(CAP - 1);
+        append_typed(&mut text, Some("ab"), CAP);
+        assert_eq!(text.chars().count(), CAP);
+        append_typed(&mut text, Some("cd"), CAP);
+        assert_eq!(text.chars().count(), CAP, "cap is not exceeded");
     }
 
     #[test]
     fn typed_text_drops_control_characters() {
         let mut text = String::new();
-        append_typed(&mut text, Some("a\tb\nc"));
+        append_typed(&mut text, Some("a\tb\nc"), 64);
         assert_eq!(text, "abc");
     }
 
     #[test]
     fn no_typed_text_is_a_noop() {
         let mut text = "kept".to_string();
-        append_typed(&mut text, None);
+        append_typed(&mut text, None, 64);
         assert_eq!(text, "kept");
     }
 
