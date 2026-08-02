@@ -7,6 +7,60 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
+## 0.5.1
+
+### Untrusted input cannot crash or lie
+
+Three places assumed the shape of data they did not produce. All three
+are corrected the same way — ask before trusting, and refuse by name
+rather than reading on.
+
+**A session with `"scale": 0` used to answer confidently and wrongly.**
+Scale is a divisor; zero produced `inf`, which saturates to `2147483647`
+on the way back into an integer, and `resolve` reported that as a click
+point with `ok: true` and exit 0. A script consuming it would have
+clicked there. Negative and non-finite scales were wrong more quietly.
+
+**Extreme coordinates used to panic.** A session carrying values near the
+integer limits reached the geometry and overflowed a subtraction, exiting
+101 through every command that reads a session.
+
+Both now exit **2** — the documented "malformed question" — with a
+message naming the field and the value. Sessions are checked once where
+they are read, so every command and `doctor` refuse the same file, which
+is the rule the config file already followed. `session.json` gains no
+fields; the rules it was always expected to satisfy are now written down
+in [OUTPUT.md](docs/OUTPUT.md) and enforced.
+
+**Six arithmetic sites widened one operation too late.** `(bx - ax) as
+i64` subtracts in the narrow type and then widens, which is the bug the
+cast was reaching for in the first place. They widen first now. Where
+every value must stay an integer there is nowhere wider to go, so those
+saturate instead; `length` and `angle_deg` stopped routing through the
+integer delta entirely and are exact at inputs where it cannot be.
+
+Rather than make the geometry total over every possible integer — which
+means saturating everywhere, and a saturated coordinate is exactly the
+confidently-wrong number this project would rather crash than produce —
+the module now documents its domain: ±1,000,000, an order of magnitude
+past the widest desktop anyone assembles. Inside it nothing panics and
+everything terminates, and a property test holds the whole public surface
+to that.
+
+**The macOS capture assumed 32-bit BGRA without asking.** It is what
+every tested display returns, but an HDR panel can return 64-bit pixels,
+and this reader would have taken the left half of every row and produced
+a plausible, silently wrong screenshot — the one failure that would
+poison every coordinate downstream while looking fine. The layout is
+checked now, and an unexpected one is refused rather than misread.
+
+### Also
+
+`pixelcoords` exits **101** when it panics. That is Rust's number, not a
+fourth answer, and [CLI.md](docs/CLI.md) now says so — a script switching
+on 0/1/2 should treat anything else as a crash, because a panic means no
+answer was produced at all.
+
 ## 0.5.0
 
 ### Marks land on edges

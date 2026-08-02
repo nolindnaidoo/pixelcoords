@@ -17,6 +17,14 @@ Exit codes are the API everywhere: **0** success/hit/found, **1**
 miss/not-found/unhealthy, **2** the question was malformed — a script can
 always tell a negative answer from a broken invocation.
 
+There is a fourth outcome, and it is not an answer: **101** means
+pixelcoords panicked. Rust's runtime picks that number, not this tool.
+A script that treats "not 0" as failure is already correct; one that
+switches on 0/1/2 should treat anything else as a crash and say so,
+because a panic means no answer was produced at all. It is a bug —
+[report it](https://github.com/nolindnaidoo/pixelcoords/issues) with the
+message, which names the file and line.
+
 Every machine-readable answer shares one envelope — `schema`, `command`,
 `captured_utc` when the command captured, an aggregate `ok` mirroring the
 exit code, and `results`. Per-region answers stay on the rows, so a

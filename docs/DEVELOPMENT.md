@@ -161,8 +161,10 @@ entry, and if it is not, the entry is the thing to fix.
 - Features land through issues → PRs (`Closes #N`), each writing its
   CHANGELOG entry under the upcoming version's heading in the same PR.
   The version in `Cargo.toml` does not move in feature PRs.
-- A GitHub **milestone** per upcoming minor collects its issues; the
-  milestone emptying is the release trigger.
+- A GitHub **milestone** per upcoming release collects its issues; the
+  milestone emptying is the release trigger. Per *release*, not per
+  minor: under the stability posture most releases are patches, and a
+  patch that groups its own fixes is the point.
 - **The milestone is the only place an issue's target version lives.** An
   issue body must never name one — not in its acceptance list, not in its
   docs checklist, which says "the upcoming version's heading" and stops
