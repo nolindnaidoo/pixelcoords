@@ -14,7 +14,7 @@ use pixelcoords_core::geometry::{Line, Point, Rect, ResizeHandle, Shape, Size, T
 use pixelcoords_core::hotkeys::{Action, Binding, Edge, KeyName, OverlayState, match_event};
 use pixelcoords_core::locate::GrayImage;
 use pixelcoords_core::selection::{GrabKind, Measure, MeasureGrab, Selection, SelectionSet};
-use pixelcoords_core::session::TargetRecord;
+use pixelcoords_core::session::{MAX_LABEL_LEN, TargetRecord};
 use pixelcoords_core::snap::{EdgeMap, Snap};
 use pixelcoords_core::strings::{EN, Strings};
 use winit::application::ApplicationHandler;
@@ -30,7 +30,6 @@ use crate::view::{OverlayView, Presentation};
 const CARET_BLINK: Duration = Duration::from_millis(500);
 const FLASH_SAVE: Duration = Duration::from_millis(2500);
 const FLASH_TOOL: Duration = Duration::from_millis(1200);
-const MAX_LABEL_LEN: usize = 64;
 /// Border-grab tolerance in logical pixels (scaled per monitor).
 const GRAB_TOLERANCE: i32 = 6;
 
@@ -1164,7 +1163,14 @@ impl App {
             Some(Builtin::Backspace) => {
                 text.pop();
             }
-            _ => append_typed(text, key.text.as_deref()),
+            _ => {
+                if append_typed(text, key.text.as_deref()) {
+                    self.set_flash(
+                        format!("Label limit {MAX_LABEL_LEN} characters"),
+                        FLASH_TOOL,
+                    );
+                }
+            }
         }
         self.caret_visible = true;
         self.caret_deadline = Some(Instant::now() + CARET_BLINK);
@@ -1184,7 +1190,14 @@ impl App {
             Some(Builtin::Backspace) => {
                 text.pop();
             }
-            _ => append_typed(text, key.text.as_deref()),
+            _ => {
+                if append_typed(text, key.text.as_deref()) {
+                    self.set_flash(
+                        format!("Label limit {MAX_LABEL_LEN} characters"),
+                        FLASH_TOOL,
+                    );
+                }
+            }
         }
         self.caret_visible = true;
         self.caret_deadline = Some(Instant::now() + CARET_BLINK);
@@ -1720,16 +1733,25 @@ fn resize_icon(handle: ResizeHandle, shape: &Shape, cursor: Point) -> CursorIcon
 /// Append the printable characters of `typed` to a label being edited,
 /// stopping at the length cap. Free rather than a method because `text` is
 /// borrowed out of the mode it lives in.
-fn append_typed(text: &mut String, typed: Option<&str>) {
+/// Append what a keystroke typed, stopping at the cap.
+///
+/// Returns whether the cap turned any character away, so the caller can
+/// say so. A keystroke that vanishes with nothing on screen reads as a
+/// dropped input rather than a limit — the same silent refusal this
+/// project rejects everywhere else.
+fn append_typed(text: &mut String, typed: Option<&str>) -> bool {
     let Some(typed) = typed else {
-        return;
+        return false;
     };
+    let mut refused = false;
     for c in typed.chars().filter(|c| !c.is_control()) {
         if text.chars().count() >= MAX_LABEL_LEN {
-            return;
+            refused = true;
+            break;
         }
         text.push(c);
     }
+    refused
 }
 
 fn shape_is_committable(shape: &Shape) -> bool {
@@ -2690,6 +2712,44 @@ mod tests {
         app.shift_changed(false);
 
         assert_eq!(app.preview_for(0), before);
+    }
+
+    #[test]
+    fn hitting_the_label_cap_says_so_instead_of_swallowing_the_key() {
+        let mut app = test_app();
+        app.selections.add(Selection::new(rect(10, 10, 20, 20), 0));
+        app.mode = Mode::LabelEditing {
+            target: EditTarget::Selection,
+            index: 0,
+            text: "x".repeat(MAX_LABEL_LEN - 1),
+        };
+
+        app.handle_key(&typed("y"));
+        assert!(
+            app.flash.is_none(),
+            "the last character fits, so no message"
+        );
+
+        app.handle_key(&typed("z"));
+        let flash = app.flash.as_ref().map(|(m, _)| m.clone());
+        assert!(
+            flash.as_deref().is_some_and(|m| m.contains("64")),
+            "the refusal must name the limit, got {flash:?}"
+        );
+    }
+
+    #[test]
+    fn append_typed_reports_whether_it_refused_anything() {
+        let mut text = String::new();
+        assert!(!append_typed(&mut text, Some("fits")));
+        let mut full = "x".repeat(MAX_LABEL_LEN);
+        assert!(append_typed(&mut full, Some("more")));
+        assert_eq!(full.chars().count(), MAX_LABEL_LEN);
+        // Control characters are dropped, but dropping them is not a
+        // refusal — nothing was turned away for being too long.
+        let mut text = String::new();
+        assert!(!append_typed(&mut text, Some("a\u{7}b")));
+        assert_eq!(text, "ab");
     }
 
     #[test]

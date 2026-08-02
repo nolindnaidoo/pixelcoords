@@ -96,7 +96,7 @@ regardless.
 | Snapping | On by default: the point you are placing lands on UI edges detected in the frozen image. `X` toggles it; arrow-key nudging is never snapped. See [CONFIGURATION.md](CONFIGURATION.md#snapping) |
 | `Q` / `E` | Rotate 1° per press, held repeats, `Shift` steps 15° |
 | `W` / `Tab` | Cycle tool: rect, ellipse, triangle, polygon, freehand, measure |
-| `3`–`9` | Polygon tool: side count |
+| `3`–`9` | Polygon tool: side count. That range is the digit keys' reach, not a limit on the shape — a session may carry any polygon |
 | `A` | Edit the label under the cursor |
 | Measure tool | Drag to lay a ruler; `Shift` snaps to 45°. Drag an endpoint to re-aim it, its middle to move it. `A` labels it, `D` deletes it, `Z` undoes it — one stack shared with shapes. Rulers are annotation only: they produce no crop and no cutout |
 | `S` | Save (stays open) |

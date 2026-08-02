@@ -17,6 +17,19 @@ pub const APP_NAME: &str = "pixelcoords";
 
 pub use crate::geometry::MAX_COORD;
 
+/// The longest label a selection or measure may carry.
+///
+/// A label becomes a filename component — `crop-<index>-<slug>.png` — and
+/// most filesystems stop at 255 bytes. That is the real constraint; 64
+/// leaves room for the prefix, the index, and multi-byte characters that
+/// slug to more bytes than they are characters.
+///
+/// Enforced here as well as at the keyboard, because a session is a file
+/// a human can edit: a label that only the overlay checked would sail in
+/// through `resume` and fail at the filesystem on the next save, which is
+/// a confusing place to learn about it.
+pub const MAX_LABEL_LEN: usize = 64;
+
 /// Why a session file is not usable, even though it parsed.
 ///
 /// Parsing proves the shape; this proves the values mean something. The
@@ -43,6 +56,11 @@ pub enum SessionError {
         "{what} carries the coordinate {value}, beyond the +/-{MAX_COORD} a session may describe"
     )]
     Coordinate { what: String, value: i32 },
+    #[error(
+        "{what} has a {len}-character label; the limit is {MAX_LABEL_LEN}, because the label \
+         becomes part of a crop's filename"
+    )]
+    Label { what: String, len: usize },
 }
 
 /// How the session's frames were obtained. Optional in the schema —
@@ -463,6 +481,17 @@ fn raw_values(shape: &Shape) -> Vec<i32> {
     }
 }
 
+fn check_label(label: &str, what: &str) -> Result<(), SessionError> {
+    let len = label.chars().count();
+    if len > MAX_LABEL_LEN {
+        return Err(SessionError::Label {
+            what: what.to_string(),
+            len,
+        });
+    }
+    Ok(())
+}
+
 fn in_range(values: &[i32], what: &str) -> Result<(), SessionError> {
     for &value in values {
         if value.abs() > MAX_COORD {
@@ -530,6 +559,7 @@ impl SessionFile {
         }
         for (index, record) in self.selections.iter().enumerate() {
             let label = format!("selection {index}");
+            check_label(&record.label, &label)?;
             in_range(&raw_values(&record.px), &label)?;
             in_range(&raw_values(&record.global_px), &label)?;
             if let Some(window) = &record.window_px {
@@ -538,6 +568,7 @@ impl SessionFile {
         }
         for (index, record) in self.measures.iter().enumerate() {
             let label = format!("measure {index}");
+            check_label(&record.label, &label)?;
             for line in [&record.px, &record.global_px] {
                 in_range(&[line.ax, line.ay, line.bx, line.by], &label)?;
             }
@@ -783,6 +814,81 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_label_too_long_for_a_filename_is_refused() {
+        // The invariant the cap protects lives in `save`: a label becomes
+        // `crop-<index>-<slug>.png`. Enforced only at the keyboard, an
+        // edited session would sail in and fail at the filesystem.
+        let mut file =
+            SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None);
+        file.selections.push(SelectionRecord {
+            shape: ToolKind::Rect,
+            label: "x".repeat(MAX_LABEL_LEN + 1),
+            monitor: 0,
+            px: Shape::Rect(Rect::new(0, 0, 10, 10)),
+            global_px: Shape::Rect(Rect::new(0, 0, 10, 10)),
+            rot_deg: None,
+            window_px: None,
+            crop: "c.png".into(),
+            color: None,
+        });
+        let Err(SessionError::Label { len, .. }) = file.validate() else {
+            panic!("an over-long label was accepted")
+        };
+        assert_eq!(len, MAX_LABEL_LEN + 1);
+    }
+
+    #[test]
+    fn a_label_exactly_at_the_cap_is_fine() {
+        let mut file =
+            SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None);
+        file.selections.push(SelectionRecord {
+            shape: ToolKind::Rect,
+            label: "x".repeat(MAX_LABEL_LEN),
+            monitor: 0,
+            px: Shape::Rect(Rect::new(0, 0, 10, 10)),
+            global_px: Shape::Rect(Rect::new(0, 0, 10, 10)),
+            rot_deg: None,
+            window_px: None,
+            crop: "c.png".into(),
+            color: None,
+        });
+        assert_eq!(file.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_measures_label_is_held_to_the_same_cap() {
+        let mut file =
+            SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None)
+                .with_measures(&[crate::selection::Measure {
+                    line: crate::geometry::Line::new(Point::new(0, 0), Point::new(5, 5)),
+                    label: "m".repeat(MAX_LABEL_LEN + 1),
+                    monitor: 0,
+                }]);
+        file.monitors = vec![monitor(0, 0, 0)];
+        assert!(matches!(file.validate(), Err(SessionError::Label { .. })));
+    }
+
+    #[test]
+    fn a_label_is_counted_in_characters_not_bytes() {
+        // A slug of multi-byte characters is longer in bytes than in
+        // chars; the cap counts what the user typed.
+        let mut file =
+            SessionFile::build("test", "t".into(), vec![monitor(0, 0, 0)], &[], &[], None);
+        file.selections.push(SelectionRecord {
+            shape: ToolKind::Rect,
+            label: "é".repeat(MAX_LABEL_LEN),
+            monitor: 0,
+            px: Shape::Rect(Rect::new(0, 0, 10, 10)),
+            global_px: Shape::Rect(Rect::new(0, 0, 10, 10)),
+            rot_deg: None,
+            window_px: None,
+            crop: "c.png".into(),
+            color: None,
+        });
+        assert_eq!(file.validate(), Ok(()), "64 characters, 128 bytes");
     }
 
     #[test]
