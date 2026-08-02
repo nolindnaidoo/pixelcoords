@@ -91,7 +91,7 @@ regardless.
 
 | Input | Action |
 |-------|--------|
-| Drag | Draw the current shape; release commits, `Esc` cancels |
+| Drag | Draw the current shape; release commits, `Esc` cancels. `Shift` locks the ellipse to a circle |
 | Drag inside / edge | Move / resize (`Shift` locks ratio) |
 | Snapping | On by default: the point you are placing lands on UI edges detected in the frozen image. `X` toggles it; arrow-key nudging is never snapped. See [CONFIGURATION.md](CONFIGURATION.md#snapping) |
 | `Q` / `E` | Rotate 1° per press, held repeats, `Shift` steps 15° |
