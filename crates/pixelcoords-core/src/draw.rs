@@ -308,6 +308,16 @@ impl<'a> Canvas<'a> {
         }
     }
 
+    /// A bare segment, no end decoration — for lines nobody grabs, like
+    /// a snap guide. Caps on a short guide read as a box rather than a
+    /// line, which is the opposite of pointing at something.
+    pub fn draw_segment(&mut self, line: Line, color: Color, thickness: i32) {
+        if thickness <= 0 {
+            return;
+        }
+        self.stamp_segment(line.a, line.b, color, thickness);
+    }
+
     /// A measure ruler: the segment plus square end caps, so the two
     /// grabbable endpoints are visible against any background.
     pub fn draw_line(&mut self, line: Line, color: Color, thickness: i32) {
@@ -1009,6 +1019,49 @@ mod tests {
         assert_eq!(buf[9 * 40 + 9], ink);
         assert_eq!(buf[9 * 40 + 31], ink);
         assert_ne!(buf[9 * 40 + 20], ink);
+    }
+
+    #[test]
+    fn a_segment_has_no_caps_where_a_line_does() {
+        let ink = Color {
+            r: 0xFF,
+            g: 0,
+            b: 0,
+        }
+        .to_0rgb();
+        let line = Line::new(Point::new(10, 10), Point::new(30, 10));
+        let color = Color {
+            r: 0xFF,
+            g: 0,
+            b: 0,
+        };
+
+        let mut capped = vec![0u32; 40 * 40];
+        Canvas::new(&mut capped, 40, 40).draw_line(line, color, 1);
+        let mut bare = vec![0u32; 40 * 40];
+        Canvas::new(&mut bare, 40, 40).draw_segment(line, color, 1);
+
+        // Both draw the segment itself.
+        assert_eq!(capped[10 * 40 + 20], ink);
+        assert_eq!(bare[10 * 40 + 20], ink);
+        // Only the ruler decorates its ends.
+        assert_eq!(capped[9 * 40 + 9], ink);
+        assert_ne!(bare[9 * 40 + 9], ink);
+        assert!(
+            bare.iter().filter(|&&p| p == ink).count()
+                < capped.iter().filter(|&&p| p == ink).count()
+        );
+    }
+
+    #[test]
+    fn draw_segment_ignores_nonpositive_thickness() {
+        let mut buf = vec![0u32; 20 * 20];
+        Canvas::new(&mut buf, 20, 20).draw_segment(
+            Line::new(Point::new(2, 2), Point::new(18, 2)),
+            Color { r: 9, g: 9, b: 9 },
+            0,
+        );
+        assert!(buf.iter().all(|&p| p == 0));
     }
 
     #[test]

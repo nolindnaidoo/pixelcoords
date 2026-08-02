@@ -204,10 +204,14 @@ impl EdgeMap {
         // neighbour and recognized as a local maximum.
         let lo = (along - radius - 1).max(0);
         let hi = (along + radius + 1).min(limit - 1);
-        let scores: Vec<u16> = (lo..=hi)
+        // Scored once, then split: the local-maximum test compares
+        // strengths across neighbours, while only the winner's anchor is
+        // ever needed.
+        let scan: Vec<(u16, i32)> = (lo..=hi)
             .map(|v| self.score(v, across, radius, axis))
-            .collect::<Vec<_>>();
-        let mut best: Option<(i32, u16, i32)> = None;
+            .collect();
+        let scores: Vec<u16> = scan.iter().map(|&(strength, _)| strength).collect();
+        let mut best: Option<(i32, u16, i32, i32)> = None;
         for (i, &score) in scores.iter().enumerate() {
             let v = lo + i32::try_from(i).unwrap_or(0);
             if (v - along).abs() > radius || u16::from(self.threshold) > score {
@@ -223,7 +227,7 @@ impl EdgeMap {
                 continue;
             }
             let distance = (v - along).abs();
-            let better = best.is_none_or(|(_, best_score, best_distance)| {
+            let better = best.is_none_or(|(_, best_score, best_distance, _)| {
                 // Nearest wins; a tie in distance breaks toward the
                 // stronger edge, so a corner does not wobble between two
                 // equidistant borders run to run. Two edges equally near
@@ -236,13 +240,13 @@ impl EdgeMap {
                 distance < best_distance || (distance == best_distance && score > best_score)
             });
             if better {
-                best = Some((v, score, distance));
+                best = Some((v, score, distance, scan[i].1));
             }
         }
-        let (at, _, _) = best?;
+        let (at, _, _, anchor) = best?;
         Some(SnapHit {
             at,
-            span: self.trace_span(at, across, axis),
+            span: self.trace_span(at, anchor, axis),
         })
     }
 
@@ -257,8 +261,14 @@ impl EdgeMap {
     /// or column, so a score sampled only there would find nothing and
     /// the corner — the single most valuable thing to snap to — would be
     /// the one place snapping failed.
-    fn score(&self, along: i32, across: i32, radius: i32, axis: Axis) -> u16 {
-        let mut best = 0u16;
+    /// Returns the score and the position along the perpendicular axis
+    /// where it was found. The position is what `trace_span` starts from:
+    /// tracing from the *query* instead would begin off the edge whenever
+    /// the outer window is what found it — a corner approached from
+    /// outside — and stop immediately, reporting a one-pixel span and
+    /// drawing the user a dot instead of the edge that caught them.
+    fn score(&self, along: i32, across: i32, radius: i32, axis: Axis) -> (u16, i32) {
+        let mut best = (0u16, across);
         for offset in -radius..=radius {
             let center = across + offset;
             let mut total = 0u32;
@@ -273,7 +283,16 @@ impl EdgeMap {
             if count == 0 {
                 continue;
             }
-            best = best.max(u16::try_from(total / count).unwrap_or(u16::MAX));
+            let score = u16::try_from(total / count).unwrap_or(u16::MAX);
+            // `>`, not `>=`: among equal windows the one nearest the
+            // query wins, since the scan starts at `-radius` and walks
+            // toward it. That keeps the drawn guide anchored beside the
+            // pointer rather than at the far end of a long border.
+            if score > best.0
+                || (score == best.0 && (center - across).abs() < (best.1 - across).abs())
+            {
+                best = (score, center);
+            }
         }
         best
     }
@@ -496,6 +515,34 @@ mod tests {
         // The button spans rows 15..45; the traced edge must not run the
         // whole frame.
         assert!(lo >= 12 && hi <= 47, "span {lo}..{hi} escaped the button");
+    }
+
+    #[test]
+    fn a_corner_approached_from_outside_still_reports_the_whole_edge() {
+        // The regression this exists for: approaching a corner
+        // diagonally from outside, the query's own row is off the edge
+        // entirely, so tracing the span from the query stopped
+        // immediately and reported a single pixel. The overlay then drew
+        // a dot instead of the edge that captured the point — the one
+        // case where seeing *what* caught you matters most.
+        let map = EdgeMap::new(&button(80, 60, 20, 15, 60, 45));
+        let outside = Point::new(16, 11);
+        let snap = map.snap(outside, 8);
+
+        let x = snap.x.expect("the left border");
+        assert_eq!(x.at, 20);
+        assert!(
+            x.span.1 - x.span.0 >= 20,
+            "vertical border runs ~30px, got {:?}",
+            x.span
+        );
+        let y = snap.y.expect("the top border");
+        assert_eq!(y.at, 15);
+        assert!(
+            y.span.1 - y.span.0 >= 30,
+            "horizontal border runs ~40px, got {:?}",
+            y.span
+        );
     }
 
     #[test]

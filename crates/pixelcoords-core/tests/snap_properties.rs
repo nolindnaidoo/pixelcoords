@@ -131,11 +131,23 @@ proptest! {
         prop_assert_eq!(map.snap(p, radius).apply(p), p);
     }
 
-    /// The reported extent always contains the query's other coordinate.
-    /// The overlay draws that segment as feedback; one that did not pass
-    /// through the point would be pointing at the wrong thing.
+    /// The reported extent is well-formed and reaches the query's
+    /// neighbourhood.
+    ///
+    /// Not "contains the query": the edge is found by scanning the whole
+    /// radius, so approaching a corner from outside legitimately reports
+    /// an edge whose extent starts past the query's own row. It must
+    /// still come within the radius, though — a span describing an edge
+    /// further away than the search looked would be feedback pointing at
+    /// something the snap did not use.
+    ///
+    /// The earlier version of this asserted containment and passed while
+    /// the code returned a *degenerate* `(q, q)` span for exactly that
+    /// corner case, because a one-pixel span at the query trivially
+    /// contains it. That is why this one also demands the span reach the
+    /// edge rather than collapse onto the pointer.
     #[test]
-    fn a_reported_span_contains_the_query(
+    fn a_reported_span_is_well_formed_and_near_the_query(
         (gray, ..) in framed_button(),
         x in 0i32..W as i32,
         y in 0i32..H as i32,
@@ -144,10 +156,34 @@ proptest! {
         let map = EdgeMap::new(&gray);
         let snap = map.snap(Point::new(x, y), radius);
         if let Some(hit) = snap.x {
-            prop_assert!(hit.span.0 <= y && y <= hit.span.1);
+            prop_assert!(hit.span.0 <= hit.span.1, "span {:?}", hit.span);
+            prop_assert!(hit.span.0 <= y + radius && hit.span.1 >= y - radius);
         }
         if let Some(hit) = snap.y {
-            prop_assert!(hit.span.0 <= x && x <= hit.span.1);
+            prop_assert!(hit.span.0 <= hit.span.1, "span {:?}", hit.span);
+            prop_assert!(hit.span.0 <= x + radius && hit.span.1 >= x - radius);
+        }
+    }
+
+    /// A snap on a real border reports a span longer than a pixel.
+    ///
+    /// The guide the overlay draws is the whole point of the span, and a
+    /// dot is not a guide. `framed_button` always draws borders at least
+    /// six pixels long, so any edge found in one is traceable.
+    #[test]
+    fn a_snap_onto_a_real_border_reports_more_than_a_dot(
+        (gray, ..) in framed_button(),
+        x in 0i32..W as i32,
+        y in 0i32..H as i32,
+        radius in 2i32..10,
+    ) {
+        let map = EdgeMap::new(&gray);
+        let snap = map.snap(Point::new(x, y), radius);
+        if let Some(hit) = snap.x {
+            prop_assert!(hit.span.1 > hit.span.0, "vertical span {:?}", hit.span);
+        }
+        if let Some(hit) = snap.y {
+            prop_assert!(hit.span.1 > hit.span.0, "horizontal span {:?}", hit.span);
         }
     }
 }
