@@ -11,7 +11,7 @@ backend, and `#![forbid(unsafe_code)]`.
 
 ```toml
 [dependencies]
-pixelcoords-core = "0.6"
+pixelcoords-core = "0.7"
 ```
 
 ## What you'd use it for

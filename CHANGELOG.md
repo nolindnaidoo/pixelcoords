@@ -67,6 +67,9 @@ platform table now says outright what has not been driven by hand since
 0.5.1, three documents that disagreed about the same gap now agree, and
 the release checklist grew the five steps that four releases taught it.
 
+Both crates also carry new crates.io keywords and categories. Nothing in
+either crate's API or behavior changes — it is how they are found.
+
 ## 0.6.0
 
 ### Breaking: two unused items leave `pixelcoords-core`

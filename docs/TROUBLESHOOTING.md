@@ -83,9 +83,11 @@ versioned, and `doctor`/`windows` speak `--json`. See
 not just CI. On Linux that means X11 with the full feature set and
 Wayland with everything Wayland permits (screen coordinates plus
 `--pick` window marking). That hand-verification covers the feature set
-through 0.4.0, and macOS through 0.5.1. **Nothing since 0.5.1 has been
-driven by hand on any platform** — those releases pass CI everywhere and
-have headless tests, which is not the same thing. Multi-monitor and
+through 0.4.0, and macOS through 0.5.1. **No overlay run since 0.5.1 has
+been driven by hand on any platform** — those releases pass CI everywhere
+and have headless tests, which is not the same thing. 0.7.0's MCP server
+is the exception, and only because it is headless: it adds no overlay
+code and was driven end to end against a real session. Multi-monitor and
 mixed-DPI are verified on macOS and remain test-only elsewhere, and
 fractional scaling is unverified everywhere. The README's platform table
 is kept honest, and this paragraph says the same thing it does.
