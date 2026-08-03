@@ -159,6 +159,14 @@ After the tag:
    release — one with the notes and one with the binaries. That happened
    at 0.5.1. Use `gh release edit`, or `gh api -X PATCH` on the draft's
    id, and check afterwards that the tag has exactly one release.
+
+   The workflow itself used to be the other way this went wrong: all four
+   matrix jobs called `action-gh-release`, which looks a release up by
+   tag and creates it when absent, so two jobs landing in the same second
+   both created one. v0.7.0 got two drafts out of a single run. Only the
+   `release` job creates a release now, and only after every build has
+   uploaded its archive — so the count check above is a check on *your*
+   commands, not on the workflow's.
 10. Publish core, then the binary. See the governance notes below.
 11. **Sync pixelcoords-site**: `TOOL_VERSION`, any copy the release
     changed, and the visual baselines — `bun run snapshots` for darwin,
