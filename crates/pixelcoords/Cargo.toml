@@ -9,29 +9,15 @@ homepage.workspace = true
 readme.workspace = true
 authors.workspace = true
 repository.workspace = true
-# The tool's five slots, chosen against what each keyword page actually
-# contains rather than what the word means to us. `coordinates` and
-# `overlay` are gone: the first is owned by astronomy and geodesy crates,
-# the second by struct-patch and netlink. `screen-capture` replaces the
-# bare `capture` — the browse page is exact-match, but free-text search
-# splits the hyphen, so the compound wins both. `hidpi` is the one-crate
-# page next to winit's `dpi`, and mixed-DPI correctness is the whole point.
-# Keywords earn their slot by adding a term the description does not
-# already carry — crates.io searches name, description, and keywords
-# together, so "screenshot", "screen-capture", and "hidpi" were spending
-# three of five slots on words already one line above. Counts are crates
-# carrying that keyword: automation 1402, testing 2108, ui 1852,
-# agent 3412, against hidpi 3 and computer-use 11.
-keywords = ["screenshot", "automation", "testing", "ui", "agent"]
-# No multimedia::images here. That category is "crates that process or
-# build images", and the binary writing PNG crops is a side effect of
-# what it does, not what it is: a terminal tool you run to get
-# coordinates and verify them. The library, which really does the image
-# work, keeps it.
+# Owner-set. Both crates carry the same five, deliberately — do not
+# re-derive these from search-volume counts.
+keywords = ["screenshot", "coordinates", "overlay", "automation", "agent"]
 categories = [
     "command-line-utilities",
-    "development-tools::testing",
     "development-tools",
+    "multimedia::images",
+    "computer-vision",
+    "graphics",
 ]
 
 [dependencies]
