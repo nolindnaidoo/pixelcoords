@@ -8,6 +8,12 @@ permissions:
   contents: write
 
 jobs:
+  # Builds only. This job must NOT touch the release: four matrix jobs each
+  # calling action-gh-release is a check-then-act race — the action looks the
+  # release up by tag and creates it when absent, so two jobs finishing in the
+  # same second both see "absent" and both create one. That is exactly what
+  # happened at v0.7.0: one run, two drafts, created at the same timestamp,
+  # one holding all four archives and one holding nothing.
   build:
     strategy:
       fail-fast: false
@@ -47,9 +53,33 @@ jobs:
             cp "target/${{ matrix.target }}/release/pixelcoords" "$name/"
             tar czf "$name.tar.gz" "$name"
           fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: archive-${{ matrix.target }}
+          path: |
+            pixelcoords-*.tar.gz
+            pixelcoords-*.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  # One job, one caller, one release. `needs: build` means every archive
+  # exists before this runs, so the draft is complete the moment it appears
+  # rather than filling in as jobs land.
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: archive-*
+          merge-multiple: true
+          path: archives
+      - name: Show what will be attached
+        run: ls -l archives
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           draft: true
+          fail_on_unmatched_files: true
           files: |
-            pixelcoords-*.tar.gz
-            pixelcoords-*.zip
+            archives/pixelcoords-*.tar.gz
+            archives/pixelcoords-*.zip
