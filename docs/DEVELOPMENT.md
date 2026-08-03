@@ -306,6 +306,42 @@ A `wait` timeout is **1**. It is a negative answer, not a broken
 question, and a script must be able to tell those apart without parsing
 stderr.
 
+### The same three outcomes over MCP
+
+`pixelcoords mcp` serves this family to a model instead of a shell. The
+commands do not change — each tool calls the same `run_*` function the
+subcommand does — so the contract above has to survive the translation,
+and there is exactly one place it can be lost.
+
+| exit | over MCP |
+|------|----------|
+| 0 | `isError: false`, `structuredContent.ok` true |
+| 1 | `isError: false`, `structuredContent.ok` **false** |
+| 2 | a JSON-RPC error, `-32602`, naming what was expected |
+
+**Exit 1 must not set `isError`.** A miss, a timeout, an over-tolerance
+diff are answers to a well-formed question, and the whole reason this
+family reports them as data is that the caller reacts to them. Report a
+miss as a tool failure and a model retries the call instead — it reads
+`isError` as "the tool broke", not as "the point was not there". That
+turns the cheapest answer in the tool into a loop, which is worse than
+not serving it at all. It is the one rule in `mcp.rs` with a test named
+after it.
+
+The rest is smaller and follows from the same idea: the report goes in
+`structuredContent` unchanged — same `schema` counter, same envelope —
+and `content` carries a one-line summary for a model reading prose. No
+tool captures without saying so in its description, because on macOS the
+difference between capturing and not is a permission prompt.
+
+Six tools, not nine: the overlay, `resume`, and `rename` are interactive
+or mutating, and `emit` is the human-facing sibling of `resolve` — handing
+a model ready-to-paste code invites it to write a script instead of act.
+The one addition is `pixelcoords_sessions`, which has no subcommand
+behind it. A model needs to discover what exists before it can ask about
+it, and it needs the labels as an array rather than the prose summary the
+resume picker shows.
+
 ### Durations: one integer, one unit
 
 `500ms`, `30s`, `2m`. No bare numbers, no decimals, no compounds

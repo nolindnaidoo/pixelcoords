@@ -76,6 +76,11 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Serve the agent surface over the Model Context Protocol on stdio,
+    /// so an LLM can ask where to click instead of being handed a
+    /// screenshot. Reads sessions a human already marked; it cannot make
+    /// one
+    Mcp,
     /// List visible windows and their titles, for use with --target
     Windows {
         /// Machine-readable list on stdout instead of the human table
