@@ -20,9 +20,17 @@ a machine attached is not a measurement.
 
 The version is when these were *taken*, not the last version they
 describe. 0.6.0 changed configuration plumbing and removed two unused
-functions; it touched none of the paths measured below, so re-running
-would only re-measure the run-to-run noise. Re-run it yourself if you
-want numbers for your own machine — that is what the harnesses are for.
+functions; 0.7.0 added a transport — the MCP server calls the same
+functions the subcommands do. Neither touched a path measured below, so
+re-running would only re-measure the run-to-run noise. Re-run it yourself
+if you want numbers for your own machine — that is what the harnesses are
+for.
+
+One consequence of that transport is worth reading off the tables rather
+than measuring again: an MCP client pays process start **once** for the
+whole conversation, not once per question. So a model asking `assert`
+repeatedly sits nearer the `--stdin` row below than the 100-processes
+row — the same amortization, for the same reason.
 
 Reproduce with:
 
