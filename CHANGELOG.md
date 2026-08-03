@@ -7,6 +7,66 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
+## 0.7.0
+
+### `pixelcoords mcp` — the agent surface, served to the agent
+
+`assert`, `resolve`, `find`, `wait`, and `diff` were built on the premise
+that the real consumer of a coordinate is a machine. Reaching them still
+took a human: someone wired a subprocess call, remembered the flag
+spellings, and parsed stdout. The new subcommand serves them over the
+Model Context Protocol on stdio, so a model calls them directly.
+
+```json
+{
+  "mcpServers": {
+    "pixelcoords": { "command": "pixelcoords", "args": ["mcp"] }
+  }
+}
+```
+
+Six tools — `pixelcoords_sessions`, `_resolve`, `_assert`, `_wait`,
+`_find`, `_diff` — each calling the same function as the subcommand it
+is named for. No command changed to make this work; the split that keeps
+`run_*` returning a report and printing nothing was already there.
+
+**It is read-only.** Marking regions is interactive, so no tool opens the
+overlay, renames a session, or edits one. The shape is *mark once, run
+many*: a human saves a session, and from then on the model asks about it.
+`pixelcoords_sessions` is the one tool with no subcommand behind it — a
+model has to discover what exists before it can ask, and it needs the
+labels as an array rather than the prose line the resume picker shows.
+
+**A negative answer is not an error.** Exit 0 and exit 1 both come back
+with `isError: false`; the answer is in `structuredContent.ok`, and the
+report inside it is the same envelope the CLI prints, same `schema`
+counter. Only exit 2 — a malformed question — is a JSON-RPC error. The
+distinction is the whole reason this family reports misses as data: a
+model that reads a miss as a broken tool retries the call instead of
+reacting to it.
+
+Every tool's description says whether it captures the screen, because on
+macOS that is the difference between an instant answer and a permission
+prompt. `resolve` without `relocate` and `assert` are pure session math —
+a file read, microseconds, no image sent — and their descriptions say to
+prefer them.
+
+`wait` blocks the server while it polls, since stdio serves one client;
+over MCP its timeout is capped at 120 seconds so a model cannot park the
+connection. The CLI is uncapped as before.
+
+Protocol revision `2026-07-28`, `2025-11-25` also accepted. Stateless, so
+no `initialize` handshake is needed — one is still answered for clients
+that send it. No new dependency and no async runtime: a conformant stdio
+server is a read loop and a `match`.
+
+### Also in this release
+
+Three documentation fixes that landed after 0.6.0 was tagged: the
+platform table now says outright what has not been driven by hand since
+0.5.1, three documents that disagreed about the same gap now agree, and
+the release checklist grew the five steps that four releases taught it.
+
 ## 0.6.0
 
 ### Breaking: two unused items leave `pixelcoords-core`

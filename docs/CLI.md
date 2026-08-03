@@ -126,6 +126,63 @@ anything is unhealthy, so scripts can gate on it.
 | `--config <FILE>` | Validate this config file |
 | `--json` | Machine-readable report on stdout |
 
+## `mcp`
+
+Serve the agent surface over the Model Context Protocol on stdio, so a
+model can ask where to click instead of being handed a screenshot. Takes
+no flags: it reads JSON-RPC on stdin and writes it on stdout, and runs
+until stdin closes. Logs go to stderr, so `RUST_LOG` still works.
+
+Point a client at the binary:
+
+```json
+{
+  "mcpServers": {
+    "pixelcoords": { "command": "pixelcoords", "args": ["mcp"] }
+  }
+}
+```
+
+Six tools, each calling the same code as the subcommand of the same name:
+
+| Tool | Subcommand | Captures the screen |
+|------|------------|---------------------|
+| `pixelcoords_sessions` | — (the `resume` picker's list) | no |
+| `pixelcoords_resolve` | `resolve` | only with `relocate` |
+| `pixelcoords_assert` | `assert` | no |
+| `pixelcoords_wait` | `wait` | every poll, and blocks |
+| `pixelcoords_find` | `find` | yes |
+| `pixelcoords_diff` | `diff` | unless `against` names stored images |
+
+Whether a tool captures is in its description, because on macOS that is
+the difference between an instant answer and a permission prompt.
+`resolve` without `relocate` and `assert` are pure session math — they
+read a file and answer in microseconds, which is what makes serving this
+worth doing at all.
+
+**It is read-only.** No tool opens the overlay, renames a session, or
+edits one: marking regions is an interactive act, and a model cannot do
+it. The workflow is *mark once, run many* — a human runs `pixelcoords`
+and saves a session, and from then on the model asks about it. When no
+session exists, `pixelcoords_sessions` returns an empty list and the
+tool's description tells the model to ask for one rather than to try.
+
+The three exit codes survive the trip. **0** and **1** are both ordinary
+results — a miss, a timeout, an over-tolerance diff come back with
+`isError: false` and `ok: false` in `structuredContent`, because they are
+answers. Only **2**, a malformed question, is a JSON-RPC error. The
+reasoning is in
+[DEVELOPMENT.md](DEVELOPMENT.md#the-same-three-outcomes-over-mcp).
+
+`wait` blocks the server while it polls, since stdio serves one client at
+a time; its `timeout_secs` is capped at 120 so a model cannot park the
+connection for ten minutes. Run the CLI directly if you want a longer
+wait.
+
+Protocol revision `2026-07-28`, with `2025-11-25` also accepted. The
+server is stateless — no `initialize` handshake is required, though one
+is still answered for older clients.
+
 ## `windows`
 
 List every window `--target` could match, front-most first.

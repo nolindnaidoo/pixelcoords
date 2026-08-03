@@ -53,6 +53,14 @@ Do these regions still look right. Where did this region move to when the
 UI drifted out from under my coordinates. Sessions reopen and edit like
 documents.
 
+Those questions are also served over MCP, so a model can ask them
+directly instead of being handed a screenshot: `pixelcoords mcp`, six
+read-only tools, no subprocess to wire up. Asking a marked session where
+to click reads a file and answers in microseconds and sends no image at
+all — the alternative is a screenshot per step, and a long computer-use
+task runs to hundreds of steps. A human still marks the regions; the
+model does the rest.
+
 No account, no network, no toolkit — one small native binary for macOS,
 Windows, and Linux. MIT-licensed, because the aim was to build the best
 tool in this category and give it away.
@@ -103,6 +111,9 @@ pixelcoords diff --session <dir> --against baseline/
 
 pixelcoords find --session <dir>
 # the UI moved? every region re-located by its saved crop, deltas included
+
+pixelcoords mcp                   # serve all of the above to an LLM over stdio
+# read-only: it asks about sessions you marked, it cannot make one
 
 pixelcoords resume                # pick any saved session, keep editing it
 
@@ -156,7 +167,9 @@ is not a blanket claim.
 - **Nothing since 0.5.1 has had a human overlay run on any platform.**
   That covers 0.5.2's mid-gesture `Shift` fix and 0.6.0's comfort
   settings, both of which change how the overlay behaves and both of
-  which are backed by headless tests only.
+  which are backed by headless tests only. 0.7.0's MCP server is not on
+  that list: it adds no overlay code, and it was driven end to end
+  against a real session.
 
 CI runs the full suite on all three platforms every push, and the overlay
 is the part tests cannot speak for. This table is kept honest — claims

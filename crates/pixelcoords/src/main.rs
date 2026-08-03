@@ -5,6 +5,7 @@ mod cli;
 mod linux;
 #[cfg(target_os = "macos")]
 mod mac;
+mod mcp;
 mod regions;
 mod render;
 mod save;
@@ -46,6 +47,13 @@ fn main() -> Result<()> {
     let args = cli::Cli::parse();
 
     match args.command {
+        Some(cli::Command::Mcp) => {
+            // Stdio is the transport, so stdout belongs to the protocol.
+            // Logging already goes to stderr, which is both the MCP rule
+            // and what this revision suggests instead of the logging
+            // feature it deprecated.
+            mcp::serve(&XcapCapture)
+        }
         Some(cli::Command::Doctor { ref config, json }) => {
             let config = config.as_deref().or(args.config.as_deref());
             let healthy = if json {
@@ -160,7 +168,10 @@ fn run_subcommand(args: &cli::Cli, command: &cli::Command) -> Result<()> {
             }
             std::process::exit(1)
         }
-        cli::Command::Doctor { .. } | cli::Command::Windows { .. } | cli::Command::Shoot { .. } => {
+        cli::Command::Doctor { .. }
+        | cli::Command::Windows { .. }
+        | cli::Command::Shoot { .. }
+        | cli::Command::Mcp => {
             unreachable!("handled in main")
         }
     }
@@ -320,7 +331,11 @@ fn wait_command(
 
 /// Validate the timing flags before anything is captured, turning the
 /// timeout into a poll count.
-fn wait_setup(timeout: &str, interval: &str, min_score: f64) -> Result<(u32, std::time::Duration)> {
+pub(crate) fn wait_setup(
+    timeout: &str,
+    interval: &str,
+    min_score: f64,
+) -> Result<(u32, std::time::Duration)> {
     use pixelcoords_core::duration::parse_duration;
 
     anyhow::ensure!(
@@ -340,7 +355,7 @@ fn wait_setup(timeout: &str, interval: &str, min_score: f64) -> Result<(u32, std
 /// The loop counts polls rather than reading a clock, so nothing about
 /// when it ends depends on how long a capture took. `elapsed_ms` is still
 /// measured and reported — provenance, not a decision.
-fn run_wait<P: CaptureProvider>(
+pub(crate) fn run_wait<P: CaptureProvider>(
     provider: &P,
     path: &std::path::Path,
     label: Option<&str>,
@@ -454,7 +469,7 @@ fn diff_command(
 
 /// Compare each region's saved crop against the same rectangle of a
 /// fresh capture, or of stored artifacts when `--against` names them.
-fn run_diff<P: CaptureProvider>(
+pub(crate) fn run_diff<P: CaptureProvider>(
     provider: &P,
     path: &std::path::Path,
     against: Option<&std::path::Path>,
@@ -598,7 +613,7 @@ fn resolve_command(
 /// capture and no permission. With it, one capture per monitor serves
 /// every label, and each region's drift is applied before the units are
 /// converted.
-fn run_resolve<P: CaptureProvider>(
+pub(crate) fn run_resolve<P: CaptureProvider>(
     provider: &P,
     path: &std::path::Path,
     label: Option<&str>,
@@ -678,7 +693,7 @@ fn run_resolve<P: CaptureProvider>(
 
 /// Re-locate every selection of a saved session in a fresh capture, using
 /// each selection's crop as its search template.
-fn run_find<P: CaptureProvider>(
+pub(crate) fn run_find<P: CaptureProvider>(
     provider: &P,
     path: &std::path::Path,
     label: Option<&str>,
@@ -724,10 +739,16 @@ fn run_find<P: CaptureProvider>(
 }
 
 /// One saved session the resume picker can offer.
-struct SessionEntry {
+pub(crate) struct SessionEntry {
     path: PathBuf,
     name: String,
     summary: String,
+    /// Every label in the session, not the four the summary shows.
+    ///
+    /// The picker wants a line that fits; an agent wants the set it can
+    /// ask for by name. Truncating for one would cost the other its
+    /// first useful move.
+    labels: Vec<String>,
     /// RFC3339 sorts lexically, so ordering needs no clock.
     created: String,
 }
@@ -768,7 +789,7 @@ fn resolve_resume_session(
 
 /// Every pixelcoords session under `root`, newest first. Unreadable or
 /// foreign directories are skipped, not fatal — this is a listing.
-fn sessions_under(root: &std::path::Path) -> Vec<SessionEntry> {
+pub(crate) fn sessions_under(root: &std::path::Path) -> Vec<SessionEntry> {
     let Ok(read) = std::fs::read_dir(root) else {
         return Vec::new();
     };
@@ -781,24 +802,24 @@ fn sessions_under(root: &std::path::Path) -> Vec<SessionEntry> {
 }
 
 /// Summarize one directory as a pickable session, if it is one of ours.
-fn session_entry(dir: &std::path::Path) -> Option<SessionEntry> {
+pub(crate) fn session_entry(dir: &std::path::Path) -> Option<SessionEntry> {
     use std::fmt::Write as _;
     let text = std::fs::read_to_string(dir.join("session.json")).ok()?;
     let session: pixelcoords_core::session::SessionFile = serde_json::from_str(&text).ok()?;
     if session.app.name != pixelcoords_core::session::APP_NAME {
         return None;
     }
-    let labels: Vec<&str> = session
+    let labels: Vec<String> = session
         .selections
         .iter()
-        .map(|s| s.label.as_str())
+        .map(|s| s.label.clone())
         .filter(|l| !l.is_empty())
-        .take(4)
         .collect();
     let mut summary = format!("{} selections", session.selections.len());
-    if !labels.is_empty() {
+    let shown: Vec<&str> = labels.iter().take(4).map(String::as_str).collect();
+    if !shown.is_empty() {
         // Writing to a String cannot fail.
-        let _ = write!(summary, " [{}]", labels.join(", "));
+        let _ = write!(summary, " [{}]", shown.join(", "));
     }
     if let Some(target) = &session.target {
         let _ = write!(summary, "  window: {:?}", target.title);
@@ -815,6 +836,7 @@ fn session_entry(dir: &std::path::Path) -> Option<SessionEntry> {
         path: dir.to_path_buf(),
         name,
         summary,
+        labels,
         created: session.created_utc,
     })
 }
@@ -996,7 +1018,7 @@ fn assert_command(
 
 /// Load the session, parse the point, and produce the verdict — everything
 /// `assert` does except printing and choosing the exit code.
-fn assess_session(
+pub(crate) fn assess_session(
     path: &std::path::Path,
     point_arg: &str,
     expect: Option<&str>,
@@ -1022,7 +1044,7 @@ fn assess_session(
 /// printed. Scoring the first six points of a trajectory and stopping
 /// would report a pass rate over a prefix, which is worse than no answer
 /// — the caller cannot see that it happened.
-fn assess_stream<R: std::io::BufRead>(
+pub(crate) fn assess_stream<R: std::io::BufRead>(
     path: &std::path::Path,
     reader: R,
     expect: Option<&str>,
@@ -1822,7 +1844,7 @@ fn default_out_dir() -> PathBuf {
 /// directory is wherever the terminal happened to be. A system with no
 /// known Downloads directory (headless Linux without XDG user dirs)
 /// falls back to the working directory, the old behavior.
-fn captures_root(downloads: Option<PathBuf>) -> PathBuf {
+pub(crate) fn captures_root(downloads: Option<PathBuf>) -> PathBuf {
     let Some(base) = downloads else {
         return PathBuf::from("pixelcoords-captures");
     };
