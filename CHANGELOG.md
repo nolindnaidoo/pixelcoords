@@ -35,19 +35,32 @@ the right word.
 Tests assert a refusal does **not** contain `--`. The leak is the bug, so
 the check is for its absence.
 
-### The capture path is tested against a real screen
+### The capture path is tested against a real screen, on every platform
 
 A screen-capture tool had no test that ever captured a screen. Unit tests
 covered the geometry, the schema and the matcher; nothing covered `shoot`
 producing a PNG of a real display, or `find` locating a region in a fresh
 capture of one.
 
-`scripts/x11-scenarios.sh` runs on every push under Xvfb: `doctor` seeing
-the display, `shoot` writing a PNG at the display's size, then a session
-built over a region of that capture driven through `find`, `resolve`,
-`assert`, `diff`, `wait`, `emit`, the MCP server, and the exit codes.
-Sixteen checks. The overlay stays out — it is interactive, and `AGENTS.md`
-says so.
+`crates/pixelcoords/tests/scenarios.rs` runs on every push against a real
+display on **macOS, Windows and Linux** — all three runners turn out to
+have one, macOS without a permission prompt and Windows with a real
+desktop. It captures, marks the most detailed region of what it found,
+and drives `find`, `resolve`, `assert`, `diff`, `wait`, `emit`, the MCP
+server and the exit codes against it.
+
+Windows matters most of the three: it has the least hand-verification
+behind it, and now the capture path there is checked on every push.
+
+Opt-in via `PIXELCOORDS_SCENARIOS=1`, because they capture the screen of
+whatever machine runs them and `AGENTS.md` requires the ordinary suite to
+be deterministic. Single-threaded, because concurrent captures of one
+display fail on macOS. The overlay stays out — it is interactive.
+
+One assertion is worth naming: a capture must be the display's **logical**
+size times its scale. `doctor` reports logical and a capture is physical,
+and conflating those is the entire class of bug this tool exists to
+prevent.
 
 ## 0.7.0
 
