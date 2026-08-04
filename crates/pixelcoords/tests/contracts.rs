@@ -448,3 +448,125 @@ fn a_label_matches_regardless_of_case() {
     let report: serde_json::Value = serde_json::from_str(&said(&out)).expect("JSON");
     assert_eq!(report["results"][0]["label"], "near", "{report}");
 }
+
+// ---------------------------------------------------------------------------
+// The config file, which `doctor` is the headless door to
+// ---------------------------------------------------------------------------
+
+/// Write a config file and return the path.
+fn config_file(name: &str, body: &str) -> String {
+    let dir = std::env::temp_dir().join(format!("pixelcoords-config-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let file = dir.join(name);
+    std::fs::write(&file, body).expect("written");
+    file.display().to_string()
+}
+
+/// `load_config` refuses a file the user *named* that is not there, but
+/// `doctor` reported "absent, defaults in effect" and exited 0 — so a
+/// typo'd `--config` path passed the health check and then failed the
+/// launch. The comment on the range check says the whole point is that
+/// "`doctor` refuses the same values a launch would"; this is the case
+/// where it did not.
+#[test]
+fn doctor_refuses_a_config_file_that_was_named_but_is_not_there() {
+    let missing = config_file("placeholder.toml", "");
+    let missing = missing.replace("placeholder.toml", "no-such-config.toml");
+
+    let out = run(&["doctor", "--config", &missing, "--json"]);
+    assert_eq!(
+        code(&out),
+        1,
+        "a named file that is absent is not healthy: {}",
+        said(&out)
+    );
+    let report: serde_json::Value = serde_json::from_str(&said(&out)).expect("JSON");
+    assert_eq!(report["config"]["status"], "missing", "{report}");
+}
+
+/// The other half: with no `--config` at all, an absent file at the default
+/// location is normal and must stay healthy. Otherwise the fix above turns
+/// every fresh install unhealthy.
+#[test]
+fn doctor_is_content_when_no_config_was_asked_for() {
+    let out = run(&["doctor", "--json"]);
+    assert_eq!(
+        code(&out),
+        0,
+        "a default install is healthy: {}",
+        said(&out)
+    );
+}
+
+/// A config whose *syntax* is broken is reported against the file, not
+/// swallowed.
+#[test]
+fn doctor_refuses_a_config_that_is_not_toml() {
+    let path = config_file("broken.toml", "this is not toml at all [[[\n");
+    let out = run(&["doctor", "--config", &path, "--json"]);
+    assert_eq!(code(&out), 1, "{}", said(&out));
+
+    let report: serde_json::Value = serde_json::from_str(&said(&out)).expect("JSON");
+    assert_eq!(report["config"]["status"], "invalid", "{report}");
+}
+
+/// A config that parses but names a key this build does not have is
+/// refused too — a silently-ignored key is a setting someone believes is
+/// in effect and is not.
+#[test]
+fn doctor_refuses_a_config_with_an_unknown_key() {
+    let path = config_file("unknown-key.toml", "resolve_style = \"centroid\"\n");
+    let out = run(&["doctor", "--config", &path, "--json"]);
+    assert_eq!(code(&out), 1, "{}", said(&out));
+
+    let report: serde_json::Value = serde_json::from_str(&said(&out)).expect("JSON");
+    let error = report["config"]["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("unknown field"),
+        "the refusal names the key: {report}"
+    );
+}
+
+/// A well-formed config loads and leaves the tool healthy.
+#[test]
+fn doctor_accepts_a_config_it_understands() {
+    let path = config_file("fine.toml", "[style]\n");
+    let out = run(&["doctor", "--config", &path, "--json"]);
+    assert_eq!(code(&out), 0, "{}", said(&out));
+
+    let report: serde_json::Value = serde_json::from_str(&said(&out)).expect("JSON");
+    assert_eq!(report["config"]["status"], "loaded", "{report}");
+}
+
+/// A config naming a hotkey action this build does not have used to load
+/// clean: `hotkeys` was the one member of the config left out of the range
+/// check, so `doctor` called the file healthy and the overlay died on it at
+/// launch.
+#[test]
+fn doctor_refuses_a_config_with_an_unusable_hotkey() {
+    for (name, body) in [
+        (
+            "bad-action.toml",
+            "[[hotkeys]]\nkey = \"u\"\naction = \"no_such_action\"\n",
+        ),
+        (
+            "bad-key.toml",
+            "[[hotkeys]]\nkey = \"F5\"\naction = \"undo\"\n",
+        ),
+    ] {
+        let path = config_file(name, body);
+        let out = run(&["doctor", "--config", &path, "--json"]);
+        assert_eq!(code(&out), 1, "{name}: {}", said(&out));
+    }
+}
+
+/// A hotkey this build can actually bind leaves it healthy.
+#[test]
+fn doctor_accepts_a_hotkey_it_can_bind() {
+    let path = config_file(
+        "good-hotkey.toml",
+        "[[hotkeys]]\nkey = \"u\"\naction = \"undo\"\n",
+    );
+    let out = run(&["doctor", "--config", &path, "--json"]);
+    assert_eq!(code(&out), 0, "{}", said(&out));
+}
