@@ -93,6 +93,18 @@ fn or_exit_two<T>(what: &str, result: Result<T>) -> T {
     }
 }
 
+/// Find a saved session by path, name, or `--last`, exiting 2 if there is
+/// no such thing.
+///
+/// Both halves of this go through [`or_exit_two`]: resolving the path and
+/// loading it. 0.7.4 wrapped only the load, which left a session that
+/// could not be *found* bubbling out of `main` as exit 1 while an
+/// unreadable one correctly exited 2.
+fn saved_session(what: &str, session: Option<&std::path::Path>, last: bool) -> PathBuf {
+    let root = captures_root(dirs::download_dir());
+    or_exit_two(what, resolve_resume_session(session, last, &root))
+}
+
 fn run_subcommand(args: &cli::Cli, command: &cli::Command) -> Result<()> {
     match *command {
         cli::Command::Assert {
@@ -125,8 +137,7 @@ fn run_subcommand(args: &cli::Cli, command: &cli::Command) -> Result<()> {
             last,
             ref out,
         } => {
-            let root = captures_root(dirs::download_dir());
-            let path = resolve_resume_session(session.as_deref(), last, &root)?;
+            let path = saved_session("resume", session.as_deref(), last);
             or_exit_two("resume", run_resume(args, &path, out.clone()));
             Ok(())
         }
@@ -134,8 +145,7 @@ fn run_subcommand(args: &cli::Cli, command: &cli::Command) -> Result<()> {
             ref session,
             ref name,
         } => {
-            let root = captures_root(dirs::download_dir());
-            let path = resolve_resume_session(Some(session), false, &root)?;
+            let path = saved_session("rename", Some(session), false);
             or_exit_two("rename", rename_session(&path, name));
             Ok(())
         }

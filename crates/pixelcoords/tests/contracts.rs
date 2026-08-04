@@ -273,7 +273,32 @@ fn every_command_refuses_an_unreadable_session_with_the_same_code() {
         assert_eq!(
             code(&out),
             2,
-            "{} should exit 2: {}",
+            "{} should exit 2 on an unreadable session: {}",
+            command[0],
+            said(&out)
+        );
+    }
+
+    // And a session that is not there at all. `rename` and `resume`
+    // resolve the path before they load it, and that half kept bubbling
+    // out of `main` as exit 1 after the load half was fixed.
+    let absent = "/no/such/session/anywhere";
+    let missing: [&[&str]; 8] = [
+        &["resolve", "--session", absent],
+        &["assert", "--session", absent, "--point", "1,1"],
+        &["emit", "--session", absent],
+        &["diff", "--session", absent],
+        &["find", "--session", absent],
+        &["wait", "--session", absent, "--timeout", "1ms"],
+        &["rename", "--session", absent, "--name", "x"],
+        &["resume", "--session", absent],
+    ];
+    for command in missing {
+        let out = run(command);
+        assert_eq!(
+            code(&out),
+            2,
+            "{} should exit 2 on a missing session: {}",
             command[0],
             said(&out)
         );
@@ -569,4 +594,67 @@ fn doctor_accepts_a_hotkey_it_can_bind() {
     );
     let out = run(&["doctor", "--config", &path, "--json"]);
     assert_eq!(code(&out), 0, "{}", said(&out));
+}
+
+// ---------------------------------------------------------------------------
+// `resume`, as far as it goes without a window
+// ---------------------------------------------------------------------------
+
+/// `resume` opens the overlay, so most of it needs a desktop. Its
+/// *refusals* do not: it loads the config, the bindings and the session
+/// before it builds a single window, so everything it rejects it rejects
+/// headless.
+///
+/// Worth pinning because `resume` used to exit 1 here — it bubbled its
+/// error out of `main`, where 1 is Rust's default — and 1 is the code that
+/// means "a real answer, and the answer is no".
+#[test]
+fn resume_refuses_a_session_it_cannot_read_without_opening_anything() {
+    let dir = std::env::temp_dir().join(format!(
+        "pixelcoords-contracts-{}-resume-junk",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(dir.join("session.json"), "not json").expect("written");
+
+    let out = run(&["resume", "--session", &path(&dir)]);
+    assert_eq!(code(&out), 2, "{}", said(&out));
+}
+
+/// A session describing no monitors cannot be reopened onto anything, and
+/// `resume` says so rather than opening an empty window.
+#[test]
+fn resume_refuses_a_session_with_no_monitors() {
+    let dir = std::env::temp_dir().join(format!(
+        "pixelcoords-contracts-{}-resume-nomonitors",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let session = serde_json::json!({
+        "schema": 1,
+        "app": { "name": "pixelcoords", "version": "0.7.0" },
+        "created_utc": "2026-01-01T00:00:00Z",
+        "platform": "macos", "capture": null, "name": "no monitors",
+        "monitors": [], "target": null, "measures": [], "selections": [],
+    });
+    std::fs::write(
+        dir.join("session.json"),
+        serde_json::to_vec_pretty(&session).expect("serialises"),
+    )
+    .expect("written");
+
+    let out = run(&["resume", "--session", &path(&dir)]);
+    assert_eq!(code(&out), 2, "{}", said(&out));
+}
+
+/// A hotkey binding `resume` cannot bind is rejected before the overlay
+/// opens — the bindings resolve above the session load, so this is the
+/// earliest refusal there is.
+#[test]
+fn resume_refuses_an_unbindable_hotkey_before_opening() {
+    let dir = two_monitor_session("resume-bad-bind");
+    let out = run(&["--bind", "F5=undo", "resume", "--session", &path(&dir)]);
+    assert_ne!(code(&out), 0, "{}", said(&out));
 }

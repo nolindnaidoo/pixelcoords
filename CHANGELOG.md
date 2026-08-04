@@ -9,7 +9,8 @@ version number, for what changed under you.
 
 ## 0.7.5 — 2026-08-04
 
-**`doctor` blessed two config files a launch would reject.**
+**`doctor` blessed two config files a launch would reject, and `resume`
+still exited 1 where everything else exits 2.**
 
 The rule is written beside the check itself: *"Range-check here, not at
 each use, so `doctor --config` refuses the same values a launch would. A
@@ -29,6 +30,13 @@ died on it at launch — the exact failure the comment describes.
 Both now flip `doctor` to unhealthy and name the file. An absent file at
 the default location still means defaults, so a fresh install stays
 healthy.
+
+**A session that could not be *found*.** 0.7.4 gave `rename` and `resume`
+the right code for a session it could not *read*, but path resolution runs
+before the load and kept bubbling out of `main` as exit 1. So a typo'd
+`--session` exited 1 from those two and 2 from the other six. Both halves
+go through one helper now, and the contract test drives all eight commands
+against both a missing session and an unreadable one.
 
 ## 0.7.4 — 2026-08-04
 
