@@ -768,10 +768,10 @@ fn a_rotated_region_resolves_to_a_point_inside_itself() {
 #[test]
 fn relocating_an_unmoved_region_lands_where_it_already_was() {
     scenario!(f);
-    let stored = run(&["resolve", "--session", &f.path(), "--json"]);
+    let stored = run(&["resolve", "--session", &f.path()]);
     assert_eq!(code(&stored), 0, "{}", said(&stored));
 
-    let relocated = run(&["resolve", "--session", &f.path(), "--relocate", "--json"]);
+    let relocated = run(&["resolve", "--session", &f.path(), "--relocate"]);
     // 1 is a fair answer here -- a region that cannot be matched cannot be
     // relocated, and a flat CI desktop produces exactly that. 2 would mean
     // the request itself was wrong.
