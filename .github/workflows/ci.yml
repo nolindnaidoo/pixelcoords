@@ -38,6 +38,32 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo build --workspace --locked
 
+  # A screen-capture tool with no test that ever captured a screen. Unit
+  # tests cover the geometry, the schema and the matcher; nothing covered
+  # `shoot` producing a real PNG of a real display, or `find` locating a
+  # region in a fresh capture of one. Xvfb is a real X server, so all of
+  # that is reachable — the overlay is not, and stays manual by design.
+  xvfb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+      - name: Install capture dependencies and a virtual X server
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=15
+          sudo apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=15 \
+            libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev libclang-dev \
+            libegl1-mesa-dev libgbm-dev pkg-config \
+            xvfb imagemagick x11-utils bc
+      - run: cargo build --workspace --locked
+      - name: Run the capture scenarios against a live X server
+        run: |
+          xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+            scripts/x11-scenarios.sh
+
   msrv:
     runs-on: ubuntu-24.04
     steps:
