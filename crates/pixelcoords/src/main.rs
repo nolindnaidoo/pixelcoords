@@ -77,6 +77,22 @@ fn main() -> Result<()> {
 /// The commands that read a saved session. Split from `main` because the
 /// dispatch outgrew one screen, not because they share behavior — each
 /// still owns its own printing and exit code.
+/// Unwrap, or exit 2 naming the command.
+///
+/// 2 is what every command that reads a session returns when the question
+/// was malformed; 1 means a real answer that happens to be no. Letting an
+/// error out of `main` instead exits 1 — Rust's default — which is how
+/// `rename` came to disagree with the other six.
+fn or_exit_two<T>(what: &str, result: Result<T>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("pixelcoords {what}: {error:#}");
+            std::process::exit(2)
+        }
+    }
+}
+
 fn run_subcommand(args: &cli::Cli, command: &cli::Command) -> Result<()> {
     match *command {
         cli::Command::Assert {
@@ -111,7 +127,8 @@ fn run_subcommand(args: &cli::Cli, command: &cli::Command) -> Result<()> {
         } => {
             let root = captures_root(dirs::download_dir());
             let path = resolve_resume_session(session.as_deref(), last, &root)?;
-            run_resume(args, &path, out.clone())
+            or_exit_two("resume", run_resume(args, &path, out.clone()));
+            Ok(())
         }
         cli::Command::Rename {
             ref session,
@@ -119,7 +136,8 @@ fn run_subcommand(args: &cli::Cli, command: &cli::Command) -> Result<()> {
         } => {
             let root = captures_root(dirs::download_dir());
             let path = resolve_resume_session(Some(session), false, &root)?;
-            rename_session(&path, name)
+            or_exit_two("rename", rename_session(&path, name));
+            Ok(())
         }
         cli::Command::Wait {
             ref session,

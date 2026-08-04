@@ -7,6 +7,23 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
+## 0.7.4 — 2026-08-04
+
+**`rename` exited 1 where every other command exits 2.**
+
+The exit codes are the API: 0 is yes, 1 is a real answer that happens to be
+no, 2 is "the question was malformed". `resolve`, `assert`, `emit`, `diff`,
+`find` and `wait` all return 2 for a session they cannot read. `rename`
+returned 1, because its error bubbled out of `main` and 1 is Rust's default
+failure code.
+
+It disagreed with itself, too: a *missing* session already exited 2, only an
+unreadable one exited 1. A script branching on 2 to mean "your input is
+wrong" would have missed exactly one case out of seven.
+
+`resume` had the same shape and is fixed with it. A test now runs all seven
+commands against the same unreadable session and holds them to one code.
+
 ## 0.7.3 — 2026-08-04
 
 **`resolve` aimed at regions with no interior, and contradicted itself

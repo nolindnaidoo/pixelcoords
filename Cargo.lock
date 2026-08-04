@@ -2235,7 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "pixelcoords"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -2256,7 +2256,7 @@ dependencies = [
 
 [[package]]
 name = "pixelcoords-core"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "fontdue",
  "proptest",
