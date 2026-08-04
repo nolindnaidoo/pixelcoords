@@ -136,7 +136,15 @@ fn session_over_the_screen(dir: &Path) -> Option<(i32, i32, i32, i32)> {
         let crop = image::imageops::crop_imm(&img, x, y, w, h).to_image();
         crop.save(dir.join("crop-0-target.png"))
             .expect("crop written");
-        write_session(dir, &monitor, scale, sw, sh, x, y, w, h);
+        write_session(
+            dir,
+            &Marked {
+                monitor: &monitor,
+                scale,
+                screen: (sw, sh),
+                region: (x, y, w, h),
+            },
+        );
 
         let report = json(&run(&["find", "--session", &dir.display().to_string()]));
         let row = &report["results"][0];
@@ -155,19 +163,23 @@ fn session_over_the_screen(dir: &Path) -> Option<(i32, i32, i32, i32)> {
     None
 }
 
-/// Write the session a human would have saved for one marked region.
-#[allow(clippy::too_many_arguments)]
-fn write_session(
-    dir: &Path,
-    monitor: &serde_json::Value,
+/// One marked region, and the display it was marked on.
+struct Marked<'a> {
+    monitor: &'a serde_json::Value,
     scale: f64,
-    sw: u32,
-    sh: u32,
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-) {
+    screen: (u32, u32),
+    region: (u32, u32, u32, u32),
+}
+
+/// Write the session a human would have saved for one marked region.
+///
+/// Grouped into a struct rather than nine arguments, because the house
+/// rule forbids silencing `too_many_arguments` inline and the lint is
+/// right anyway.
+fn write_session(dir: &Path, marked: &Marked<'_>) {
+    let (sw, sh) = marked.screen;
+    let (x, y, w, h) = marked.region;
+    let (monitor, scale) = (marked.monitor, marked.scale);
     let px = serde_json::json!({ "x": x, "y": y, "w": w, "h": h });
     let session = serde_json::json!({
         "schema": 1,
