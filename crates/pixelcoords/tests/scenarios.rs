@@ -79,7 +79,7 @@ fn session_over_the_screen(dir: &Path) -> Option<(i32, i32, i32, i32)> {
     let (sw, sh) = (img.width(), img.height());
 
     let (tile_w, tile_h) = (200u32, 60u32);
-    let mut best = (0.0f64, 0u32, 0u32);
+    let mut candidates: Vec<(f64, u32, u32)> = Vec::new();
     let mut top = 0;
     while top + tile_h < sh.min(700) {
         let mut left = 0;
@@ -102,41 +102,84 @@ fn session_over_the_screen(dir: &Path) -> Option<(i32, i32, i32, i32)> {
                 }
             }
             let variance = (sum_sq / count) - (sum / count).powi(2);
-            if variance > best.0 {
-                best = (variance, left, top);
-            }
+            candidates.push((variance, left, top));
             left += 100;
         }
         top += 80;
     }
 
-    if best.0 < 25.0 {
+    // Detail is necessary but not sufficient. A desktop can be busy *and*
+    // repetitive — a gradient, a tiled background, a row of identical
+    // icons — and a crop of a repeating thing matches in more than one
+    // place, which the tool refuses because an ambiguous match yields no
+    // point worth acting on. Variance cannot see that; `find` can.
+    //
+    // So: rank by detail, then ask the tool which candidate is actually
+    // markable, and take the first it accepts. That is the same judgement
+    // a human makes when marking a region, delegated to the thing that
+    // owns it.
+    candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
+    candidates.truncate(12);
+    if candidates.first().is_none_or(|best| best.0 < 25.0) {
         eprintln!(
-            "the desktop is flat (best variance {:.1}) — no scenario over it is meaningful",
-            best.0
+            "the desktop is flat — no scenario over it is meaningful (best variance {:.1})",
+            candidates.first().map_or(0.0, |c| c.0)
         );
         return None;
     }
 
-    let (_, x, y) = best;
-    let (w, h) = (tile_w, tile_h);
-    let crop = image::imageops::crop_imm(&img, x, y, w, h).to_image();
-    crop.save(dir.join("crop-0-target.png"))
-        .expect("crop written");
-
-    // Built from what `doctor` reports, not from what a fixture would like
-    // to be true: pixelcoords matches a session's monitor to an attached
-    // one **by name**, and refuses the pair when they disagree. `size` is
-    // logical and the session records physical, so it is scaled here —
-    // getting that backwards is the mistake this tool exists to prevent.
     let monitor = json(&run(&["doctor", "--json"]))["monitors"][0].clone();
     let scale = monitor["scale"].as_f64().unwrap_or(1.0);
+    let (w, h) = (tile_w, tile_h);
+
+    for (variance, x, y) in candidates {
+        let crop = image::imageops::crop_imm(&img, x, y, w, h).to_image();
+        crop.save(dir.join("crop-0-target.png"))
+            .expect("crop written");
+        write_session(dir, &monitor, scale, sw, sh, x, y, w, h);
+
+        let report = json(&run(&["find", "--session", &dir.display().to_string()]));
+        let row = &report["results"][0];
+        if row["found"] == true && row["ambiguous"] == false {
+            eprintln!("marked {x},{y} {w}x{h} (variance {variance:.1})");
+            return Some((
+                i32::try_from(x).expect("in range"),
+                i32::try_from(y).expect("in range"),
+                i32::try_from(w).expect("in range"),
+                i32::try_from(h).expect("in range"),
+            ));
+        }
+    }
+
+    eprintln!("no tile on this desktop is both detailed and unique — nothing to mark");
+    None
+}
+
+/// Write the session a human would have saved for one marked region.
+#[allow(clippy::too_many_arguments)]
+fn write_session(
+    dir: &Path,
+    monitor: &serde_json::Value,
+    scale: f64,
+    sw: u32,
+    sh: u32,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+) {
     let px = serde_json::json!({ "x": x, "y": y, "w": w, "h": h });
     let session = serde_json::json!({
         "schema": 1,
         "app": { "name": "pixelcoords", "version": env!("CARGO_PKG_VERSION") },
         "created_utc": "2026-01-01T00:00:00Z",
         "platform": null, "capture": null, "name": "scenarios",
+        // Named from what `doctor` reports, not from what a fixture would
+        // like to be true: pixelcoords matches a session's monitor to an
+        // attached one **by name**, and refuses the pair when they
+        // disagree. The size comes from the capture itself, which is
+        // physical — `doctor` reports logical, and conflating the two is
+        // the class of bug this whole tool exists to prevent.
         "monitors": [{
             "index": 0,
             "name": monitor["name"],
@@ -157,13 +200,6 @@ fn session_over_the_screen(dir: &Path) -> Option<(i32, i32, i32, i32)> {
         serde_json::to_vec_pretty(&session).expect("session serializes"),
     )
     .expect("session written");
-
-    Some((
-        i32::try_from(x).expect("in range"),
-        i32::try_from(y).expect("in range"),
-        i32::try_from(w).expect("in range"),
-        i32::try_from(h).expect("in range"),
-    ))
 }
 
 /// A scratch directory that removes itself, so a scenario run leaves no
