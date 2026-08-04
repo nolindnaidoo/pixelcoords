@@ -60,12 +60,13 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-CI (`.github/workflows/ci.yml`) runs seven required jobs on every PR —
+CI (`.github/workflows/ci.yml`) runs eight required jobs on every PR —
 all must pass before anything merges to `main`:
 
 | Job | What it enforces |
 |-----|------------------|
 | `test` (macOS, Windows, Ubuntu) | fmt, clippy pedantic `-D warnings`, tests, build — per OS |
+| `scenarios` (macOS, Windows, Ubuntu) | the binary driven against a **real display**, on every platform |
 | `msrv` | the workspace builds on Rust 1.88 |
 | `policy` | no inline `#[allow(...)]` anywhere (workspace-level relaxations only) |
 | `coverage` | 90% line coverage floor **per module** in core |
@@ -81,9 +82,26 @@ all must pass before anything merges to `main`:
   windowless (`test_app()` in `app.rs`), capture-dependent code runs
   against fake `CaptureProvider`s (see the mixed-DPI fake in
   `main.rs`). Follow those patterns; do not mock the window system.
+- **`crates/pixelcoords/tests/contracts.rs`** drives the built binary
+  against sessions the test writes by hand. It needs no display, so it
+  runs in an ordinary `cargo test --workspace` on any machine. The exit
+  codes live here: a caller programs against "0 means yes, 1 means no, 2
+  means the question was malformed", and a change to which code a refusal
+  returns breaks scripts silently.
+- **`crates/pixelcoords/tests/scenarios.rs`** drives the binary against a
+  genuine capture of the runner's screen. It needs a display and
+  `pixelcoords` on `PATH`, so it is gated behind `PIXELCOORDS_SCENARIOS`
+  and only the `scenarios` job sets it. One capture is taken and copied
+  per test — sixteen captures of the same still screen is pressure a
+  virtual display does not need.
+- **Do not run `scenarios` on a machine you are using.** Every score,
+  percentage and poll count in it measures whatever is on screen at the
+  time. A pass taken on a busy desktop is luck and a failure is noise;
+  push and read the CI result instead.
 - Overlay behavior (windows, capture, permissions) is verified by
   manual runs on real hardware per platform — never claim visual
-  behavior works without one.
+  behavior works without one. The open issues labelled *Hand-verify*
+  carry the checklists, with setup and pass/fail criteria for each.
 - Every bug fix ships with a regression test that fails before the fix.
 
 Measuring coverage like CI does:

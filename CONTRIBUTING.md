@@ -5,9 +5,14 @@ and Linux, but not every combination has met real hardware: fractional
 scaling is unverified everywhere, multi-monitor outside macOS is
 test-only, and no *overlay* run since 0.5.1 has been driven by hand on
 any platform. (0.7.0's MCP server was — it is headless, and adds no
-overlay code.) The planned feature set is complete, so the most valuable
-contributions now are bug reports from real machines and small, focused
-fixes — a run on a machine we do not have is worth more than a patch.
+overlay code.)
+
+**The feature set is complete and 0.7.x is a stability series** — fixes
+only, so there is something dependable to build against. The most valuable
+contribution now is a bug report from a real machine: everything that can
+be checked without a person has been, on all three platforms every push,
+so what is left is what only hardware can answer. A run on a machine we do
+not have is worth more than a patch.
 
 ## Bug reports
 
