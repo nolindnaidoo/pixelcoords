@@ -38,61 +38,51 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo build --workspace --locked
 
-  # A screen-capture tool with no test that ever captured a screen. Unit
-  # tests cover the geometry, the schema and the matcher; nothing covered
-  # `shoot` producing a real PNG of a real display, or `find` locating a
-  # region in a fresh capture of one. Xvfb is a real X server, so all of
-  # that is reachable — the overlay is not, and stays manual by design.
-  xvfb:
-    runs-on: ubuntu-24.04
+  # A screen-capture tool needs a test that captures a screen. The unit
+  # suite covers geometry, the schema and the matcher; none of it looks at
+  # a display.
+  #
+  # All three runners turn out to have one — macOS without a TCC prompt,
+  # Windows with a real desktop, Linux under Xvfb — so this runs
+  # everywhere rather than on the one platform that was easy. Windows has
+  # the least hand-verification behind it, which makes it the most
+  # valuable of the three.
+  #
+  # The overlay stays out: it is interactive, and `AGENTS.md` says so.
+  #
+  # Single-threaded on purpose. Every scenario captures, and concurrent
+  # captures of the same display fail on macOS.
+  scenarios:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
           toolchain: stable
-      - name: Install capture dependencies and a virtual X server
+      - name: Install Linux capture dependencies and a virtual X server
+        if: runner.os == 'Linux'
         timeout-minutes: 5
         run: |
           sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=15
           sudo apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=15 \
             libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev libclang-dev \
-            libegl1-mesa-dev libgbm-dev pkg-config \
-            xvfb imagemagick x11-utils bc
-      - run: cargo build --workspace --locked
-      - name: Run the capture scenarios against a live X server
+            libegl1-mesa-dev libgbm-dev pkg-config xvfb
+      - name: Capture scenarios against this platform's display
+        if: runner.os != 'Linux'
+        env:
+          PIXELCOORDS_SCENARIOS: "1"
+        run: cargo test --test scenarios -- --test-threads=1
+      - name: Capture scenarios against a virtual X server
+        if: runner.os == 'Linux'
+        env:
+          PIXELCOORDS_SCENARIOS: "1"
         run: |
           xvfb-run -a --server-args="-screen 0 1280x1024x24" \
-            scripts/x11-scenarios.sh
-
-  # PROBE — temporary. Does a GitHub runner have a display this tool can
-  # actually capture? macOS gates capture behind TCC and Windows runs in a
-  # session whose desktop may or may not be reachable; both are worth
-  # finding out rather than assuming, because Windows is the least
-  # hand-verified platform and anything automatable there is worth more
-  # than anything automatable on the one used daily.
-  #
-  # `continue-on-error` so a "no" is data rather than a red badge.
-  capture-probe:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15, windows-2025]
-    runs-on: ${{ matrix.os }}
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
-        with:
-          toolchain: stable
-      - run: cargo build --workspace --locked
-      - name: Can it see a display?
-        shell: bash
-        run: ./target/debug/pixelcoords doctor --json || echo "doctor exited $?"
-      - name: Can it capture one?
-        shell: bash
-        run: |
-          ./target/debug/pixelcoords shoot --out "$RUNNER_TEMP/probe" || echo "shoot exited $?"
-          ls -l "$RUNNER_TEMP/probe" 2>/dev/null || echo "nothing written"
+            cargo test --test scenarios -- --test-threads=1
 
   msrv:
     runs-on: ubuntu-24.04

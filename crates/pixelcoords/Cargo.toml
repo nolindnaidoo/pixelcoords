@@ -48,3 +48,9 @@ zbus = "5.17"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# Already regular dependencies of this binary; declared again so the
+# scenario integration test can crop a capture and read a report.
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde_json = "1"
