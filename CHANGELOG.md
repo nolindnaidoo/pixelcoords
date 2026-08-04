@@ -7,6 +7,48 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
+## 0.7.1 — 2026-08-04
+
+### MCP callers are no longer told to fix flags they never used
+
+The MCP tools call the same `run_*` functions the subcommands do —
+deliberately, so the two surfaces cannot answer differently. But those
+functions refuse in the CLI's vocabulary, and five of those refusals were
+reachable from a tool call.
+
+A caller passing `min_score` was told `--min-score is a correlation score
+in 0..=1 (diff's --tolerance is the percentage…)`: two command-line flags,
+neither of which exists in the argument surface it was using. A model
+reading that may relay it to someone who is not at a command line, or try
+passing `--tolerance` as an argument name.
+
+`min_score` and `tolerance` are now bounded in `mcp.rs`, in the argument's
+own name and **before the session is read**, so a caller learns what is
+wrong with their argument rather than what is wrong with their path. That
+is the pattern `timeout_secs` and `interval_ms` already used.
+
+Two more live on paths both surfaces reach, so they name the concept
+rather than one spelling of it: monitor-space ambiguity, and comparing
+against a single image. The CLI keeps its flag names everywhere they are
+the right word.
+
+Tests assert a refusal does **not** contain `--`. The leak is the bug, so
+the check is for its absence.
+
+### The capture path is tested against a real screen
+
+A screen-capture tool had no test that ever captured a screen. Unit tests
+covered the geometry, the schema and the matcher; nothing covered `shoot`
+producing a PNG of a real display, or `find` locating a region in a fresh
+capture of one.
+
+`scripts/x11-scenarios.sh` runs on every push under Xvfb: `doctor` seeing
+the display, `shoot` writing a PNG at the display's size, then a session
+built over a region of that capture driven through `find`, `resolve`,
+`assert`, `diff`, `wait`, `emit`, the MCP server, and the exit codes.
+Sixteen checks. The overlay stays out — it is interactive, and `AGENTS.md`
+says so.
+
 ## 0.7.0
 
 ### `pixelcoords mcp` — the agent surface, served to the agent

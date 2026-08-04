@@ -559,7 +559,7 @@ fn stored_frames(
         } else {
             anyhow::ensure!(
                 session.monitors.len() == 1,
-                "--against with a single image needs a one-monitor session; \
+                "comparing against a single image needs a one-monitor session; \
                  this one has {} — point it at a session directory instead",
                 session.monitors.len()
             );
@@ -1144,8 +1144,8 @@ fn resolve_space(
             let indices: Vec<usize> = session.monitors.iter().map(|m| m.index).collect();
             anyhow::ensure!(
                 indices.len() == 1,
-                "--space monitor is ambiguous on a session with monitors {indices:?} — \
-                 add --monitor N"
+                "monitor space is ambiguous on a session with monitors {indices:?} — \
+                 name which one, by index"
             );
             Ok(Origin::Monitor(indices[0]))
         }
@@ -3275,7 +3275,13 @@ mod tests {
         let err = super::resolve_space(crate::cli::SpaceArg::Monitor, None, &session)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("--monitor N"), "got: {err}");
+        // Names the concept, not one surface's spelling of it: this path
+        // is reached from `--space monitor` on the CLI and from
+        // `space: "monitor"` over MCP, and an MCP caller has no
+        // `--monitor` to add.
+        assert!(err.contains("ambiguous"), "got: {err}");
+        assert!(err.contains("[0, 1]"), "names the candidates: {err}");
+        assert!(!err.contains("--"), "leaks a flag: {err}");
         let ok = super::resolve_space(crate::cli::SpaceArg::Monitor, Some(1), &session).unwrap();
         assert_eq!(ok, pixelcoords_core::space::Origin::Monitor(1));
     }
