@@ -767,6 +767,16 @@ fn tool_wait<P: CaptureProvider>(provider: &P, args: &Map<String, Value>) -> Res
         return Err("interval_ms must be at least 1".into());
     }
     let min_score = opt_f64(args, "min_score")?.unwrap_or(pixelcoords_core::locate::SCORE_FLOOR);
+    // Bounded here rather than left to `wait_setup`, which words its
+    // refusal for a command line: it names `--min-score` and contrasts it
+    // with diff's `--tolerance`, and a caller who passed `min_score` in
+    // JSON has neither flag and cannot act on either name.
+    if !(0.0..=1.0).contains(&min_score) {
+        return Err(format!(
+            "min_score must be between 0 and 1 — it is a correlation score, not a \
+             percentage; got {min_score}"
+        ));
+    }
     let (budget, interval) =
         crate::wait_setup(&format!("{timeout}s"), &format!("{interval}ms"), min_score)
             .map_err(|e| format!("{e:#}"))?;
@@ -806,6 +816,13 @@ fn tool_diff<P: CaptureProvider>(provider: &P, args: &Map<String, Value>) -> Res
     let label = opt_str(args, "label")?;
     let against = opt_str(args, "against")?.map(std::path::PathBuf::from);
     let tolerance = opt_f64(args, "tolerance")?.unwrap_or(0.0);
+    // As above: `run_diff` refuses this by naming `--tolerance`.
+    if !(0.0..=100.0).contains(&tolerance) {
+        return Err(format!(
+            "tolerance must be between 0 and 100 — it is the percentage of a region's \
+             pixels allowed to differ; got {tolerance}"
+        ));
+    }
     let report = crate::run_diff(provider, &session, against.as_deref(), label, tolerance)
         .map_err(|e| format!("{e:#}"))?;
     // `ok` is the aggregate the exit code mirrors; a row carries its own
@@ -1259,5 +1276,51 @@ mod tests {
                 .unwrap()
                 .contains("not both")
         );
+    }
+
+    /// A refusal must name the argument the caller passed, never the flag
+    /// the CLI spells it with. A model that reads "--tolerance" has no
+    /// such flag and cannot act on the advice; the leak *is* the bug, so
+    /// this asserts its absence directly.
+    #[test]
+    fn a_refusal_never_names_a_command_line_flag() {
+        let cases = [
+            json!({"session": "/tmp/s", "min_score": 5}),
+            json!({"session": "/tmp/s", "min_score": -1}),
+        ];
+        for args in cases {
+            let reply = ask(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                                    "params":{"name":"pixelcoords_wait","arguments":args}}));
+            let message = reply["error"]["message"].as_str().expect("a message");
+            assert!(!message.contains("--"), "leaked a flag: {message}");
+            assert!(
+                message.contains("min_score"),
+                "names the argument: {message}"
+            );
+        }
+
+        let reply = ask(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                                "params":{"name":"pixelcoords_diff",
+                                          "arguments":{"session":"/tmp/s","tolerance":150}}}));
+        let message = reply["error"]["message"].as_str().expect("a message");
+        assert!(!message.contains("--"), "leaked a flag: {message}");
+        assert!(
+            message.contains("tolerance"),
+            "names the argument: {message}"
+        );
+    }
+
+    /// Bounds are checked before the session is read, so a caller learns
+    /// what is wrong with their argument rather than what is wrong with
+    /// their path.
+    #[test]
+    fn bounds_are_checked_before_the_session_is_touched() {
+        let reply = ask(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                                "params":{"name":"pixelcoords_diff",
+                                          "arguments":{"session":"/definitely/not/here",
+                                                       "tolerance":150}}}));
+        let message = reply["error"]["message"].as_str().expect("a message");
+        assert!(message.contains("tolerance"), "{message}");
+        assert!(!message.contains("No such file"), "{message}");
     }
 }
