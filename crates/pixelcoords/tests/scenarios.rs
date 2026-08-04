@@ -56,6 +56,15 @@ fn code(out: &Output) -> i32 {
     out.status.code().unwrap_or(-1)
 }
 
+/// Everything the process said, both streams — refusals go to stderr.
+fn said(out: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
 fn json(out: &Output) -> serde_json::Value {
     serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
         panic!(
@@ -746,5 +755,68 @@ fn a_rotated_region_resolves_to_a_point_inside_itself() {
         code(&scored),
         0,
         "a rotated region resolved to a point outside itself"
+    );
+}
+
+/// `resolve --relocate` captures the screen and corrects for drift, so the
+/// answer describes where the region *is* rather than where it was.
+///
+/// Against the screen it was captured from there is no drift, which is the
+/// point: the relocated answer must equal the stored one. A `--relocate`
+/// that quietly shifted a region on an unchanged screen would move every
+/// click a caller makes, and nothing else in this harness would notice.
+#[test]
+fn relocating_an_unmoved_region_lands_where_it_already_was() {
+    scenario!(f);
+    let stored = run(&["resolve", "--session", &f.path(), "--json"]);
+    assert_eq!(code(&stored), 0, "{}", said(&stored));
+
+    let relocated = run(&["resolve", "--session", &f.path(), "--relocate", "--json"]);
+    // 1 is a fair answer here -- a region that cannot be matched cannot be
+    // relocated, and a flat CI desktop produces exactly that. 2 would mean
+    // the request itself was wrong.
+    if code(&relocated) == 1 {
+        eprintln!("skipped: this display cannot be matched against");
+        return;
+    }
+    assert_eq!(code(&relocated), 0, "{}", said(&relocated));
+
+    let before = json(&stored)["results"][0]["point"].clone();
+    let after = json(&relocated)["results"][0]["point"].clone();
+    let (bx, by) = (
+        before["x"].as_f64().expect("an x"),
+        before["y"].as_f64().expect("a y"),
+    );
+    let (ax, ay) = (
+        after["x"].as_f64().expect("an x"),
+        after["y"].as_f64().expect("a y"),
+    );
+    assert!(
+        (ax - bx).abs() <= 1.0 && (ay - by).abs() <= 1.0,
+        "relocating an unmoved region moved it: {before} -> {after}"
+    );
+}
+
+/// `resume --last` picks the most recent session under the captures root
+/// with no argument at all.
+///
+/// Only the *resolution* is exercised: an unbindable hotkey stops it
+/// before a window opens, so this proves `--last` found a session and got
+/// as far as the bindings without ever putting anything on screen. A
+/// runner has no captures root, so a refusal naming that is the correct
+/// answer there and is accepted as one.
+#[test]
+fn resume_last_resolves_without_a_session_argument() {
+    scenario!(_f);
+    let out = run(&["--bind", "F5=undo", "resume", "--last"]);
+    assert_eq!(code(&out), 2, "{}", said(&out));
+
+    let told = said(&out);
+    assert!(
+        told.contains("hotkey binding")
+            || told.contains("no sessions")
+            || told.contains("captures"),
+        "--last should either find a session and reach the bindings, or say \
+         there are none: {told}"
     );
 }
