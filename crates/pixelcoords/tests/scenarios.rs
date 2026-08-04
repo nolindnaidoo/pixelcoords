@@ -248,10 +248,42 @@ impl Fixture {
     }
 }
 
+/// The one capture every scenario works from.
+///
+/// Captured once and copied, not re-captured per test. Sixteen sequential
+/// captures is real pressure on a virtual display — Linux CI failed a
+/// `shoot` partway through a run — and nothing here needs sixteen
+/// captures of the same still screen. Each test still gets its own
+/// directory, because a scenario that rewrites the session must not leak
+/// into the next one.
+static SHARED: std::sync::OnceLock<Option<Capture>> = std::sync::OnceLock::new();
+
+/// Where the one capture lives, and the region marked in it.
+#[derive(Clone)]
+struct Capture {
+    dir: PathBuf,
+    region: (i32, i32, i32, i32),
+}
+
+fn shared_capture() -> Option<&'static Capture> {
+    SHARED
+        .get_or_init(|| {
+            let dir =
+                std::env::temp_dir().join(format!("pixelcoords-capture-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("capture dir");
+            let region = session_over_the_screen(&dir)?;
+            Some(Capture { dir, region })
+        })
+        .as_ref()
+}
+
 fn fixture() -> Option<Fixture> {
     if !enabled() {
         return None;
     }
+    let capture = shared_capture()?;
+    let (source, (x, y, w, h)) = (&capture.dir, capture.region);
     let seq = NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
         "pixelcoords-scenarios-{}-{seq}",
@@ -259,10 +291,12 @@ fn fixture() -> Option<Fixture> {
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
-    let Some((x, y, w, h)) = session_over_the_screen(&dir) else {
-        let _ = std::fs::remove_dir_all(&dir);
-        return None;
-    };
+    for entry in std::fs::read_dir(source).expect("the capture is readable") {
+        let entry = entry.expect("a directory entry");
+        if entry.file_type().is_ok_and(|t| t.is_file()) {
+            std::fs::copy(entry.path(), dir.join(entry.file_name())).expect("copied");
+        }
+    }
     Some(Fixture { dir, x, y, w, h })
 }
 
