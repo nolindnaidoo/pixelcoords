@@ -57,6 +57,18 @@ whatever machine runs them and `AGENTS.md` requires the ordinary suite to
 be deterministic. Single-threaded, because concurrent captures of one
 display fail on macOS. The overlay stays out — it is interactive.
 
+Sixteen scenarios: the nine above plus `windows` (which must either list
+or say why it cannot — Wayland withholds window geometry and refusing is
+the right answer), `rename` round-tripping, `assert --stdin` scoring a
+trajectory where one miss makes the run a miss without poisoning the other
+rows, `wait --for change` timing out at exit **1** rather than 2,
+`diff --against` the session's own capture finding nothing changed, and
+**every shape kind** — rect, circle, ellipse, triangle, poly, freehand,
+plus a rotated one — resolving to a point the shape actually contains.
+
+That last one is checked by asking `assert`, so the two commands are held
+against each other rather than against arithmetic written in the test.
+
 One assertion is worth naming: a capture must be the display's **logical**
 size times its scale. `doctor` reports logical and a capture is physical,
 and conflating those is the entire class of bug this tool exists to

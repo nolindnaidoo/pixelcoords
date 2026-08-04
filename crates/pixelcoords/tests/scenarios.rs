@@ -24,6 +24,15 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+/// Numbers each fixture directory.
+///
+/// A counter, not the thread id: these run single-threaded — concurrent
+/// captures of one display fail on macOS — so every test shares a thread
+/// and would therefore share a directory, and a scenario that rewrites
+/// the session would leak into the next one. It did, and `find` failed
+/// because of it.
+static NEXT_FIXTURE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// Skip unless asked. Returns `false` when the scenarios are off.
 fn enabled() -> bool {
     std::env::var("PIXELCOORDS_SCENARIOS").is_ok()
@@ -239,21 +248,55 @@ impl Fixture {
     }
 }
 
+/// The one capture every scenario works from.
+///
+/// Captured once and copied, not re-captured per test. Sixteen sequential
+/// captures is real pressure on a virtual display — Linux CI failed a
+/// `shoot` partway through a run — and nothing here needs sixteen
+/// captures of the same still screen. Each test still gets its own
+/// directory, because a scenario that rewrites the session must not leak
+/// into the next one.
+static SHARED: std::sync::OnceLock<Option<Capture>> = std::sync::OnceLock::new();
+
+/// Where the one capture lives, and the region marked in it.
+#[derive(Clone)]
+struct Capture {
+    dir: PathBuf,
+    region: (i32, i32, i32, i32),
+}
+
+fn shared_capture() -> Option<&'static Capture> {
+    SHARED
+        .get_or_init(|| {
+            let dir =
+                std::env::temp_dir().join(format!("pixelcoords-capture-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("capture dir");
+            let region = session_over_the_screen(&dir)?;
+            Some(Capture { dir, region })
+        })
+        .as_ref()
+}
+
 fn fixture() -> Option<Fixture> {
     if !enabled() {
         return None;
     }
+    let capture = shared_capture()?;
+    let (source, (x, y, w, h)) = (&capture.dir, capture.region);
+    let seq = NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "pixelcoords-scenarios-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
+        "pixelcoords-scenarios-{}-{seq}",
+        std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("scratch dir");
-    let Some((x, y, w, h)) = session_over_the_screen(&dir) else {
-        let _ = std::fs::remove_dir_all(&dir);
-        return None;
-    };
+    for entry in std::fs::read_dir(source).expect("the capture is readable") {
+        let entry = entry.expect("a directory entry");
+        if entry.file_type().is_ok_and(|t| t.is_file()) {
+            std::fs::copy(entry.path(), dir.join(entry.file_name())).expect("copied");
+        }
+    }
     Some(Fixture { dir, x, y, w, h })
 }
 
@@ -438,4 +481,270 @@ fn an_unknown_label_exits_two() {
     scenario!(f);
     let out = run(&["resolve", "--session", &f.path(), "--label", "nosuchlabel"]);
     assert_eq!(code(&out), 2, "a malformed question exits 2");
+}
+
+// ---------------------------------------------------------------------
+// Deeper surface. Everything above proves the happy path of one command;
+// these cover the flags, the shape kinds and the commands that had no
+// coverage against a real display at all.
+// ---------------------------------------------------------------------
+
+#[test]
+fn windows_answers_or_says_why_it_cannot() {
+    if !enabled() {
+        return;
+    }
+    let out = run(&["windows", "--json"]);
+    // X11 and macOS list; Wayland exits nonzero and points at `--pick`,
+    // because the protocol withholds window geometry. Both are correct
+    // answers — what would be wrong is a crash or an empty success that
+    // implies there are no windows.
+    match code(&out) {
+        0 => {
+            let report = json(&out);
+            assert!(
+                report.get("windows").is_some() || report.is_array(),
+                "a zero exit must carry a list: {report}"
+            );
+        }
+        other => {
+            let said = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                !said.trim().is_empty(),
+                "a refusal must say why, exit {other}"
+            );
+        }
+    }
+}
+
+#[test]
+fn rename_sticks_and_is_read_back() {
+    scenario!(f);
+    let out = run(&[
+        "rename",
+        "--session",
+        &f.path(),
+        "--name",
+        "a friendly name",
+    ]);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+
+    let session: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(PathBuf::from(f.path()).join("session.json")).unwrap(),
+    )
+    .expect("session still parses after a rename");
+    assert_eq!(
+        session["name"], "a friendly name",
+        "the name is written where the resume picker reads it"
+    );
+}
+
+#[test]
+fn assert_streams_a_trajectory_in_one_process() {
+    scenario!(f);
+    let (cx, cy) = f.centre();
+    // Three inside, one far outside: the aggregate must be a miss while
+    // the rows still say which was which, because scoring a trajectory is
+    // the reason `--stdin` exists.
+    let points = format!(
+        "{cx},{cy}\n{cx},{cy}\n{},{}\n{cx},{cy}\n",
+        f.x - 9_000,
+        f.y - 9_000
+    );
+    let mut child = Command::new(binary())
+        .args(["assert", "--session", &f.path(), "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("assert starts");
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .as_mut()
+            .expect("stdin")
+            .write_all(points.as_bytes())
+            .expect("points written");
+    }
+    let out = child.wait_with_output().expect("assert answers");
+    assert_eq!(out.status.code(), Some(1), "one miss makes the run a miss");
+    let report: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("a report on stdout");
+    let rows = report["results"].as_array().expect("rows");
+    assert_eq!(rows.len(), 4, "one row per point: {report}");
+    assert_eq!(rows[0]["hit"], true);
+    assert_eq!(rows[2]["hit"], false, "the third point was outside");
+    assert_eq!(rows[3]["hit"], true, "a miss does not poison the rest");
+}
+
+#[test]
+fn wait_for_change_times_out_on_a_still_screen() {
+    scenario!(f);
+    let out = run(&[
+        "wait",
+        "--session",
+        &f.path(),
+        "--for",
+        "change",
+        "--timeout",
+        "1s",
+        "--interval",
+        "200ms",
+    ]);
+    // Nothing is changing, so the condition never holds. That is exit 1 —
+    // a negative answer — and emphatically not 2, which would mean the
+    // question was malformed.
+    assert_eq!(
+        code(&out),
+        1,
+        "a timeout is exit 1: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(json(&out)["ok"], false);
+}
+
+#[test]
+fn diff_against_the_original_capture_finds_nothing_changed() {
+    scenario!(f);
+    // `--against` compares to stored artifacts instead of capturing. The
+    // session's own screenshot is by definition identical to itself, so
+    // this isolates the comparison from anything moving on screen.
+    let out = run(&["diff", "--session", &f.path(), "--against", &f.path()]);
+    assert_ne!(code(&out), 2, "{}", String::from_utf8_lossy(&out.stderr));
+    let report = json(&out);
+    assert_eq!(
+        report["ok"], true,
+        "a capture differs from itself by nothing: {report}"
+    );
+    assert_eq!(report["results"][0]["changed_px"], 0);
+}
+
+/// Every shape a human can mark, resolved against a real session.
+///
+/// The unit suite property-tests these over synthetic coordinates. What
+/// it cannot show is that a session carrying one round-trips through the
+/// schema and comes back out of `resolve` with a click point inside it —
+/// which is the only thing a caller actually asks for.
+#[test]
+fn every_shape_kind_resolves_to_a_point_inside_itself() {
+    scenario!(f);
+    let dir = PathBuf::from(f.path());
+    let (x, y, w, h) = (f.x, f.y, f.w, f.h);
+    let (cx, cy) = (x + w / 2, y + h / 2);
+
+    // Each is sized to sit within the region already marked, so the
+    // shapes are on real pixels rather than off the edge of the screen.
+    let shapes = [
+        (
+            "rect",
+            serde_json::json!({ "x": x, "y": y, "w": w, "h": h }),
+        ),
+        (
+            "circle",
+            serde_json::json!({ "cx": cx, "cy": cy, "r": h / 3 }),
+        ),
+        (
+            "ellipse",
+            serde_json::json!({ "cx": cx, "cy": cy, "rx": w / 3, "ry": h / 3 }),
+        ),
+        (
+            "triangle",
+            serde_json::json!({
+                "ax": x, "ay": y + h, "bx": x + w, "by": y + h, "cx": cx, "cy": y
+            }),
+        ),
+        (
+            "poly",
+            serde_json::json!({ "points": [
+                { "x": x, "y": y }, { "x": x + w, "y": y },
+                { "x": x + w, "y": y + h }, { "x": x, "y": y + h }
+            ] }),
+        ),
+        (
+            "freehand",
+            serde_json::json!({ "points": [
+                { "x": x, "y": y }, { "x": x + w, "y": y + h / 2 },
+                { "x": x, "y": y + h }
+            ] }),
+        ),
+    ];
+
+    for (kind, px) in shapes {
+        let mut session: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("session.json")).unwrap())
+                .expect("the session parses");
+        session["selections"][0]["shape"] = serde_json::json!(kind);
+        session["selections"][0]["px"] = px.clone();
+        session["selections"][0]["global_px"] = px.clone();
+        std::fs::write(
+            dir.join("session.json"),
+            serde_json::to_vec_pretty(&session).unwrap(),
+        )
+        .unwrap();
+
+        let out = run(&["resolve", "--session", &f.path(), "--units", "physical"]);
+        assert_eq!(
+            code(&out),
+            0,
+            "{kind} did not resolve: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let point = &json(&out)["results"][0]["point"];
+        let (px_x, px_y) = (
+            point["x"].as_i64().expect("x"),
+            point["y"].as_i64().expect("y"),
+        );
+
+        // The click point must be a point the shape actually contains —
+        // `assert` is the tool's own answer to that, so the two are held
+        // against each other rather than against my arithmetic.
+        let scored = run(&[
+            "assert",
+            "--session",
+            &f.path(),
+            "--point",
+            &format!("{px_x},{px_y}"),
+            "--expect",
+            "target",
+        ]);
+        assert_eq!(
+            code(&scored),
+            0,
+            "{kind} resolved to ({px_x}, {px_y}), which it does not contain"
+        );
+    }
+}
+
+/// A rotated selection is still hit-tested at the angle it was saved.
+#[test]
+fn a_rotated_region_resolves_to_a_point_inside_itself() {
+    scenario!(f);
+    let dir = PathBuf::from(f.path());
+    let mut session: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("session.json")).unwrap()).unwrap();
+    session["selections"][0]["rot_deg"] = serde_json::json!(30);
+    std::fs::write(
+        dir.join("session.json"),
+        serde_json::to_vec_pretty(&session).unwrap(),
+    )
+    .unwrap();
+
+    let out = run(&["resolve", "--session", &f.path(), "--units", "physical"]);
+    assert_eq!(code(&out), 0, "{}", String::from_utf8_lossy(&out.stderr));
+    let point = &json(&out)["results"][0]["point"];
+    let scored = run(&[
+        "assert",
+        "--session",
+        &f.path(),
+        "--point",
+        &format!("{},{}", point["x"], point["y"]),
+        "--expect",
+        "target",
+    ]);
+    assert_eq!(
+        code(&scored),
+        0,
+        "a rotated region resolved to a point outside itself"
+    );
 }
