@@ -64,6 +64,36 @@ jobs:
           xvfb-run -a --server-args="-screen 0 1280x1024x24" \
             scripts/x11-scenarios.sh
 
+  # PROBE — temporary. Does a GitHub runner have a display this tool can
+  # actually capture? macOS gates capture behind TCC and Windows runs in a
+  # session whose desktop may or may not be reachable; both are worth
+  # finding out rather than assuming, because Windows is the least
+  # hand-verified platform and anything automatable there is worth more
+  # than anything automatable on the one used daily.
+  #
+  # `continue-on-error` so a "no" is data rather than a red badge.
+  capture-probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+      - run: cargo build --workspace --locked
+      - name: Can it see a display?
+        shell: bash
+        run: ./target/debug/pixelcoords doctor --json || echo "doctor exited $?"
+      - name: Can it capture one?
+        shell: bash
+        run: |
+          ./target/debug/pixelcoords shoot --out "$RUNNER_TEMP/probe" || echo "shoot exited $?"
+          ls -l "$RUNNER_TEMP/probe" 2>/dev/null || echo "nothing written"
+
   msrv:
     runs-on: ubuntu-24.04
     steps:
