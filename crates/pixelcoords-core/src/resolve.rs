@@ -47,6 +47,27 @@ pub enum ResolveError {
          window — ask in global or monitor space instead"
     )]
     OffTargetMonitor { selection: usize, label: String },
+    #[error(
+        "selection {selection} ({label:?}) has no interior to aim at — a \
+         {kind} this size covers no pixel, so there is nowhere on it to click"
+    )]
+    NoInterior {
+        selection: usize,
+        label: String,
+        kind: &'static str,
+    },
+}
+
+/// What to call a shape in a refusal, so the message names the thing the
+/// caller drew rather than a variant name.
+fn kind_name(shape: &Shape) -> &'static str {
+    match shape {
+        Shape::Rect(_) => "rectangle",
+        Shape::Circle { .. } => "circle",
+        Shape::Ellipse { .. } => "ellipse",
+        Shape::Triangle { .. } => "triangle",
+        Shape::Poly { .. } => "polygon",
+    }
 }
 
 /// Where to act for one selection, and what the answer is measured in.
@@ -151,6 +172,28 @@ fn one(
         None => stored,
     };
     let physical = region.click_point();
+
+    // `click_point` promises an interior point, and for every shape the
+    // overlay can produce it delivers one. A *degenerate* shape has no
+    // interior for it to find: a zero-area rect, a polygon of fewer than
+    // three vertices, a triangle whose points are collinear. Those cannot
+    // be marked by hand -- the overlay discards shapes below its commit
+    // threshold -- but the session format is public, and a file written by
+    // something else can hold one.
+    //
+    // Left unchecked the answer contradicts itself: `resolve` says click
+    // here and exits 0, while `assert` says that point is not in the
+    // region. One of them has to be wrong, and it is not the hit test --
+    // that *is* the definition of inside. So the invariant is enforced
+    // against the hit test rather than restated: whatever `click_point`
+    // returns has to be a point the region actually covers.
+    if !region.hit_test(physical) {
+        return Err(ResolveError::NoInterior {
+            selection: index,
+            label: record.label.clone(),
+            kind: kind_name(&region),
+        });
+    }
 
     let (point, region) = match units {
         Resolved::Physical => (physical, region),
@@ -645,5 +688,136 @@ mod tests {
             concave.hit_test(concave.click_point()),
             "the physical point it derives from is inside the real shape"
         );
+    }
+
+    /// A shape with no interior used to resolve anyway.
+    ///
+    /// `click_point` promises an interior point, and for anything the
+    /// overlay can draw it delivers one. Degenerate shapes -- a zero-area
+    /// rect, a polygon of fewer than three vertices, a triangle whose
+    /// vertices are collinear -- have no interior for it to find, and it
+    /// returned a fabricated point with `ok: true` regardless. A caller
+    /// clicked it: for a rect with negative extents that meant a negative
+    /// coordinate, off every screen; for an empty polygon, the origin.
+    ///
+    /// The tool contradicted itself -- `resolve` said click here, `assert`
+    /// said that point is not in the region -- and the hit test is the
+    /// definition of inside, so `resolve` was the one that was wrong.
+    #[test]
+    fn a_shape_with_no_interior_is_refused_rather_than_aimed_at() {
+        let degenerate = [
+            Shape::Rect(Rect::new(10, 10, 0, 0)),
+            Shape::Rect(Rect::new(10, 10, -40, -20)),
+            Shape::Poly { points: vec![] },
+            Shape::Poly {
+                points: vec![Point::new(50, 50)],
+            },
+            Shape::Poly {
+                points: vec![Point::new(50, 50), Point::new(80, 80)],
+            },
+            // Collinear: three points on one line enclose nothing.
+            Shape::Triangle {
+                ax: 0,
+                ay: 0,
+                bx: 100,
+                by: 0,
+                cx: 200,
+                cy: 0,
+            },
+        ];
+
+        for shape in degenerate {
+            let mut sel = Selection::new(shape.clone(), 1);
+            sel.label = "t".into();
+            let file = SessionFile::build(
+                "test",
+                "2026-08-01T00:00:00Z".into(),
+                vec![MonitorRecord {
+                    index: 1,
+                    name: "Retina".into(),
+                    primary: true,
+                    origin_px: Point::new(0, 0),
+                    size_px: crate::geometry::Size::new(2560, 1440),
+                    scale: 2.0,
+                }],
+                &[sel],
+                &["c0.png".into()],
+                None,
+            );
+            let error = resolve(&file, None, Origin::Global, Resolved::Physical, &none)
+                .expect_err(&format!("{shape:?} should not resolve"));
+            assert!(
+                matches!(error, ResolveError::NoInterior { .. }),
+                "{shape:?}: {error}"
+            );
+        }
+    }
+
+    /// The invariant behind that fix, stated directly: whatever `resolve`
+    /// hands back has to be a point the region actually covers. Anything
+    /// else is the tool disagreeing with itself.
+    #[test]
+    fn a_resolved_point_is_always_inside_its_own_region() {
+        let shapes = [
+            Shape::Rect(Rect::new(10, 20, 40, 30)),
+            Shape::Circle {
+                cx: 100,
+                cy: 200,
+                r: 40,
+            },
+            Shape::Ellipse {
+                cx: 100,
+                cy: 200,
+                rx: 40,
+                ry: 20,
+            },
+            Shape::Triangle {
+                ax: 0,
+                ay: 0,
+                bx: 100,
+                by: 0,
+                cx: 50,
+                cy: 80,
+            },
+            // Concave: the bbox centre of an L falls outside it, so this is
+            // the case a naive centre would get wrong.
+            Shape::Poly {
+                points: vec![
+                    Point::new(0, 0),
+                    Point::new(100, 0),
+                    Point::new(100, 20),
+                    Point::new(20, 20),
+                    Point::new(20, 100),
+                    Point::new(0, 100),
+                ],
+            },
+        ];
+
+        for shape in shapes {
+            let mut sel = Selection::new(shape.clone(), 1);
+            sel.label = "t".into();
+            let file = SessionFile::build(
+                "test",
+                "2026-08-01T00:00:00Z".into(),
+                vec![MonitorRecord {
+                    index: 1,
+                    name: "Retina".into(),
+                    primary: true,
+                    origin_px: Point::new(0, 0),
+                    size_px: crate::geometry::Size::new(2560, 1440),
+                    scale: 2.0,
+                }],
+                &[sel],
+                &["c0.png".into()],
+                None,
+            );
+            let resolved = resolve(&file, None, Origin::Global, Resolved::Physical, &none)
+                .unwrap_or_else(|e| panic!("{shape:?}: {e}"));
+            let point = resolved[0].point;
+            assert!(
+                shape.hit_test(point),
+                "{shape:?} resolved to {point:?}, which it does not cover"
+            );
+        }
     }
 }
