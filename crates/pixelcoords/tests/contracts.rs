@@ -239,6 +239,47 @@ fn a_missing_session_is_refused() {
     assert_eq!(code(&out), 2, "{}", said(&out));
 }
 
+/// Every command that reads a session refuses an unreadable one the same
+/// way — exit 2.
+///
+/// `rename` used to exit **1** here. It bubbled its error out of `main`,
+/// which is Rust's default failure code, and 1 is the code that means "a
+/// real answer, and the answer is no". A script checking for 2 to mean
+/// "your input is wrong" would have missed it. `rename` already exited 2
+/// for a session that was *missing*, so it disagreed with itself as well
+/// as with the other six.
+#[test]
+fn every_command_refuses_an_unreadable_session_with_the_same_code() {
+    let dir = std::env::temp_dir().join(format!(
+        "pixelcoords-contracts-{}-unreadable-all",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(dir.join("session.json"), "not json at all").expect("written");
+    let at = path(&dir);
+
+    let commands: [&[&str]; 7] = [
+        &["resolve", "--session", &at],
+        &["assert", "--session", &at, "--point", "1,1"],
+        &["emit", "--session", &at],
+        &["diff", "--session", &at],
+        &["find", "--session", &at],
+        &["wait", "--session", &at, "--timeout", "1ms"],
+        &["rename", "--session", &at, "--name", "x"],
+    ];
+    for command in commands {
+        let out = run(command);
+        assert_eq!(
+            code(&out),
+            2,
+            "{} should exit 2: {}",
+            command[0],
+            said(&out)
+        );
+    }
+}
+
 /// A session file that is not JSON at all.
 #[test]
 fn an_unreadable_session_is_refused() {
