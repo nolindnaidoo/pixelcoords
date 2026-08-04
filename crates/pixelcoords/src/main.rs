@@ -93,6 +93,18 @@ fn or_exit_two<T>(what: &str, result: Result<T>) -> T {
     }
 }
 
+/// Find a saved session by path, name, or `--last`, exiting 2 if there is
+/// no such thing.
+///
+/// Both halves of this go through [`or_exit_two`]: resolving the path and
+/// loading it. 0.7.4 wrapped only the load, which left a session that
+/// could not be *found* bubbling out of `main` as exit 1 while an
+/// unreadable one correctly exited 2.
+fn saved_session(what: &str, session: Option<&std::path::Path>, last: bool) -> PathBuf {
+    let root = captures_root(dirs::download_dir());
+    or_exit_two(what, resolve_resume_session(session, last, &root))
+}
+
 fn run_subcommand(args: &cli::Cli, command: &cli::Command) -> Result<()> {
     match *command {
         cli::Command::Assert {
@@ -125,8 +137,7 @@ fn run_subcommand(args: &cli::Cli, command: &cli::Command) -> Result<()> {
             last,
             ref out,
         } => {
-            let root = captures_root(dirs::download_dir());
-            let path = resolve_resume_session(session.as_deref(), last, &root)?;
+            let path = saved_session("resume", session.as_deref(), last);
             or_exit_two("resume", run_resume(args, &path, out.clone()));
             Ok(())
         }
@@ -134,8 +145,7 @@ fn run_subcommand(args: &cli::Cli, command: &cli::Command) -> Result<()> {
             ref session,
             ref name,
         } => {
-            let root = captures_root(dirs::download_dir());
-            let path = resolve_resume_session(Some(session), false, &root)?;
+            let path = saved_session("rename", Some(session), false);
             or_exit_two("rename", rename_session(&path, name));
             Ok(())
         }
@@ -1313,6 +1323,18 @@ fn config_json(config: Option<&std::path::Path>, healthy: &mut bool) -> serde_js
                 })
             }
         },
+        // A file the user *named* and that is not there is a mistake, not
+        // a default. `load_config` already refuses it, so a launch fails
+        // while `doctor` used to call the same file healthy -- the exact
+        // "looks valid until it matters" this check exists to prevent.
+        Some(path) if config.is_some() => {
+            *healthy = false;
+            serde_json::json!({
+                "path": path.display().to_string(),
+                "status": "missing",
+                "error": format!("config file {} not found", path.display()),
+            })
+        }
         Some(path) => serde_json::json!({
             "path": path.display().to_string(),
             "status": "absent, defaults in effect",
@@ -1714,6 +1736,13 @@ fn load_config(explicit: Option<&std::path::Path>) -> Result<Config> {
         config.resolve_limits().err(),
         config.resolve_overlay().err(),
         config.resolve_monitors().err(),
+        // Hotkeys were the one member left out, so a file naming an action
+        // this build does not have loaded clean, `doctor` called it
+        // healthy, and the overlay died on it at launch -- exactly the
+        // "valid until it matters" the comment above warns about. No extra
+        // specs here: this validates the file, and `--bind` is checked
+        // where it is given.
+        config.resolve_bindings(&[]).err(),
     ]
     .into_iter()
     .flatten()
@@ -1767,6 +1796,13 @@ fn doctor(config: Option<&std::path::Path>) -> bool {
                 println!("config: {} (INVALID: {e:#})", path.display());
             }
         },
+        Some(path) if config.is_some() => {
+            healthy = false;
+            println!(
+                "config: {} (NOT FOUND — you named this file)",
+                path.display()
+            );
+        }
         Some(path) => println!("config: {} (not present, using defaults)", path.display()),
         None => println!("config: no config directory on this system, using defaults"),
     }
@@ -2232,12 +2268,19 @@ mod tests {
     fn config_json_reports_status_and_flips_health_on_invalid() {
         let missing = std::env::temp_dir().join("pixelcoords-test-doctor-json-absent.toml");
         let _ = std::fs::remove_file(&missing);
-        // An absent file means defaults, not ill health — the same rule
-        // the human doctor applies.
+        // A file the caller *named* and that is not there is a mistake, not
+        // a default: `load_config` refuses it, so a launch would fail. This
+        // used to assert the opposite and kept the bug in place — `doctor`
+        // called a typo'd `--config` path healthy and exited 0.
+        //
+        // The other half — no `--config` given, nothing at the default
+        // location, still healthy — is `doctor_is_content_when_no_config_
+        // was_asked_for` in tests/contracts.rs, where it can drive the real
+        // binary instead of depending on this machine's config directory.
         let mut healthy = true;
         let json = super::config_json(Some(&missing), &mut healthy);
-        assert_eq!(json["status"], "absent, defaults in effect");
-        assert!(healthy);
+        assert_eq!(json["status"], "missing");
+        assert!(!healthy, "a named file that is absent is not healthy");
 
         let bad = std::env::temp_dir().join("pixelcoords-test-doctor-json-bad.toml");
         std::fs::write(&bad, "not toml at all [").unwrap();

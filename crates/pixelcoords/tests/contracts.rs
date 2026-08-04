@@ -273,7 +273,32 @@ fn every_command_refuses_an_unreadable_session_with_the_same_code() {
         assert_eq!(
             code(&out),
             2,
-            "{} should exit 2: {}",
+            "{} should exit 2 on an unreadable session: {}",
+            command[0],
+            said(&out)
+        );
+    }
+
+    // And a session that is not there at all. `rename` and `resume`
+    // resolve the path before they load it, and that half kept bubbling
+    // out of `main` as exit 1 after the load half was fixed.
+    let absent = "/no/such/session/anywhere";
+    let missing: [&[&str]; 8] = [
+        &["resolve", "--session", absent],
+        &["assert", "--session", absent, "--point", "1,1"],
+        &["emit", "--session", absent],
+        &["diff", "--session", absent],
+        &["find", "--session", absent],
+        &["wait", "--session", absent, "--timeout", "1ms"],
+        &["rename", "--session", absent, "--name", "x"],
+        &["resume", "--session", absent],
+    ];
+    for command in missing {
+        let out = run(command);
+        assert_eq!(
+            code(&out),
+            2,
+            "{} should exit 2 on a missing session: {}",
             command[0],
             said(&out)
         );
@@ -447,4 +472,204 @@ fn a_label_matches_regardless_of_case() {
 
     let report: serde_json::Value = serde_json::from_str(&said(&out)).expect("JSON");
     assert_eq!(report["results"][0]["label"], "near", "{report}");
+}
+
+// ---------------------------------------------------------------------------
+// The config file, which `doctor` is the headless door to
+// ---------------------------------------------------------------------------
+
+/// Write a config file and return the path.
+fn config_file(name: &str, body: &str) -> String {
+    let dir = std::env::temp_dir().join(format!("pixelcoords-config-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let file = dir.join(name);
+    std::fs::write(&file, body).expect("written");
+    file.display().to_string()
+}
+
+/// What `doctor` says about the config file, on its own.
+///
+/// The process exit code is the health of *everything* — permissions, the
+/// monitor table, the config — and a headless Linux runner has no display,
+/// so it is unhealthy for reasons that have nothing to do with the file
+/// under test. These assertions read the config verdict directly.
+fn config_verdict(args: &[&str]) -> serde_json::Value {
+    let out = run(args);
+    let report: serde_json::Value = serde_json::from_str(&said(&out))
+        .unwrap_or_else(|e| panic!("doctor should speak JSON ({e}): {}", said(&out)));
+    report["config"].clone()
+}
+
+/// `load_config` refuses a file the user *named* that is not there, but
+/// `doctor` reported "absent, defaults in effect" and exited 0 — so a
+/// typo'd `--config` path passed the health check and then failed the
+/// launch. The comment on the range check says the whole point is that
+/// "`doctor` refuses the same values a launch would"; this is the case
+/// where it did not.
+#[test]
+fn doctor_refuses_a_config_file_that_was_named_but_is_not_there() {
+    let missing = config_file("placeholder.toml", "");
+    let missing = missing.replace("placeholder.toml", "no-such-config.toml");
+
+    let verdict = config_verdict(&["doctor", "--config", &missing, "--json"]);
+    assert_eq!(verdict["status"], "missing", "{verdict}");
+
+    // An invalid config forces unhealthy on its own, so the exit code is
+    // meaningful here even where a runner has no display.
+    let out = run(&["doctor", "--config", &missing, "--json"]);
+    assert_ne!(code(&out), 0, "{}", said(&out));
+}
+
+/// The other half: with no `--config` at all, an absent file at the default
+/// location is normal and must not be complained about. Otherwise the fix
+/// above turns every fresh install unhealthy.
+///
+/// Read off the config verdict rather than the exit code — a headless
+/// runner has no display and is unhealthy for reasons that have nothing to
+/// do with the config file.
+#[test]
+fn doctor_is_content_when_no_config_was_asked_for() {
+    let verdict = config_verdict(&["doctor", "--json"]);
+    let status = verdict["status"].as_str().unwrap_or_default();
+    assert!(
+        status.contains("defaults in effect") || status.contains("no config directory"),
+        "no --config means defaults, not a complaint: {verdict}"
+    );
+}
+
+/// A config whose *syntax* is broken is reported against the file, not
+/// swallowed.
+#[test]
+fn doctor_refuses_a_config_that_is_not_toml() {
+    let path = config_file("broken.toml", "this is not toml at all [[[\n");
+    let verdict = config_verdict(&["doctor", "--config", &path, "--json"]);
+    assert_eq!(verdict["status"], "invalid", "{verdict}");
+    assert_ne!(code(&run(&["doctor", "--config", &path, "--json"])), 0);
+}
+
+/// A config that parses but names a key this build does not have is
+/// refused too — a silently-ignored key is a setting someone believes is
+/// in effect and is not.
+#[test]
+fn doctor_refuses_a_config_with_an_unknown_key() {
+    let path = config_file("unknown-key.toml", "resolve_style = \"centroid\"\n");
+    let verdict = config_verdict(&["doctor", "--config", &path, "--json"]);
+    let error = verdict["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("unknown field"),
+        "the refusal names the key: {verdict}"
+    );
+    assert_ne!(code(&run(&["doctor", "--config", &path, "--json"])), 0);
+}
+
+/// A well-formed config loads and leaves the tool healthy.
+#[test]
+fn doctor_accepts_a_config_it_understands() {
+    let path = config_file("fine.toml", "[style]\n");
+    let verdict = config_verdict(&["doctor", "--config", &path, "--json"]);
+    assert_eq!(verdict["status"], "loaded", "{verdict}");
+}
+
+/// A config naming a hotkey action this build does not have used to load
+/// clean: `hotkeys` was the one member of the config left out of the range
+/// check, so `doctor` called the file healthy and the overlay died on it at
+/// launch.
+#[test]
+fn doctor_refuses_a_config_with_an_unusable_hotkey() {
+    for (name, body) in [
+        (
+            "bad-action.toml",
+            "[[hotkeys]]\nkey = \"u\"\naction = \"no_such_action\"\n",
+        ),
+        (
+            "bad-key.toml",
+            "[[hotkeys]]\nkey = \"F5\"\naction = \"undo\"\n",
+        ),
+    ] {
+        let path = config_file(name, body);
+        let verdict = config_verdict(&["doctor", "--config", &path, "--json"]);
+        assert_eq!(verdict["status"], "invalid", "{name}: {verdict}");
+    }
+}
+
+/// A hotkey this build can actually bind leaves it healthy.
+#[test]
+fn doctor_accepts_a_hotkey_it_can_bind() {
+    let path = config_file(
+        "good-hotkey.toml",
+        "[[hotkeys]]\nkey = \"u\"\naction = \"undo\"\n",
+    );
+    let verdict = config_verdict(&["doctor", "--config", &path, "--json"]);
+    assert_eq!(verdict["status"], "loaded", "{verdict}");
+}
+
+// ---------------------------------------------------------------------------
+// `resume`, as far as it goes without a window
+// ---------------------------------------------------------------------------
+
+/// `resume` opens the overlay, so most of it needs a desktop. Its
+/// *refusals* do not: it loads the config, the bindings and the session
+/// before it builds a single window, so everything it rejects it rejects
+/// headless.
+///
+/// Worth pinning because `resume` used to exit 1 here — it bubbled its
+/// error out of `main`, where 1 is Rust's default — and 1 is the code that
+/// means "a real answer, and the answer is no".
+#[test]
+fn resume_refuses_a_session_it_cannot_read_without_opening_anything() {
+    let dir = std::env::temp_dir().join(format!(
+        "pixelcoords-contracts-{}-resume-junk",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    std::fs::write(dir.join("session.json"), "not json").expect("written");
+
+    let out = run(&["resume", "--session", &path(&dir)]);
+    assert_eq!(code(&out), 2, "{}", said(&out));
+}
+
+/// A session describing no monitors cannot be reopened onto anything, and
+/// `resume` says so rather than opening an empty window.
+#[test]
+fn resume_refuses_a_session_with_no_monitors() {
+    let dir = std::env::temp_dir().join(format!(
+        "pixelcoords-contracts-{}-resume-nomonitors",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let session = serde_json::json!({
+        "schema": 1,
+        "app": { "name": "pixelcoords", "version": "0.7.0" },
+        "created_utc": "2026-01-01T00:00:00Z",
+        "platform": "macos", "capture": null, "name": "no monitors",
+        "monitors": [], "target": null, "measures": [], "selections": [],
+    });
+    std::fs::write(
+        dir.join("session.json"),
+        serde_json::to_vec_pretty(&session).expect("serialises"),
+    )
+    .expect("written");
+
+    let out = run(&["resume", "--session", &path(&dir)]);
+    assert_eq!(code(&out), 2, "{}", said(&out));
+}
+
+/// A hotkey binding `resume` cannot bind is rejected before the overlay
+/// opens — the bindings resolve above the session load, so this is the
+/// earliest refusal there is.
+#[test]
+fn resume_refuses_an_unbindable_hotkey_before_opening() {
+    let dir = two_monitor_session("resume-bad-bind");
+    let out = run(&["--bind", "F5=undo", "resume", "--session", &path(&dir)]);
+    assert_eq!(code(&out), 2, "{}", said(&out));
+    // Asserted on the message, not just the code: a runner with no display
+    // fails `resume` anyway, and a test that cannot tell the two apart
+    // would pass without proving the binding was ever looked at.
+    assert!(
+        said(&out).contains("hotkey binding"),
+        "the refusal should name the binding, not the display: {}",
+        said(&out)
+    );
 }
