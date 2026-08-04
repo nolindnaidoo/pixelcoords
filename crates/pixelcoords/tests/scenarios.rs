@@ -24,6 +24,15 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+/// Numbers each fixture directory.
+///
+/// A counter, not the thread id: these run single-threaded — concurrent
+/// captures of one display fail on macOS — so every test shares a thread
+/// and would therefore share a directory, and a scenario that rewrites
+/// the session would leak into the next one. It did, and `find` failed
+/// because of it.
+static NEXT_FIXTURE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// Skip unless asked. Returns `false` when the scenarios are off.
 fn enabled() -> bool {
     std::env::var("PIXELCOORDS_SCENARIOS").is_ok()
@@ -243,12 +252,7 @@ fn fixture() -> Option<Fixture> {
     if !enabled() {
         return None;
     }
-    // A counter, not the thread id: these run single-threaded — concurrent
-    // captures of one display fail on macOS — so every test would share a
-    // thread and therefore a directory, and a scenario that rewrites the
-    // session would leak into the next one. It did.
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let seq = NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
         "pixelcoords-scenarios-{}-{seq}",
         std::process::id()
