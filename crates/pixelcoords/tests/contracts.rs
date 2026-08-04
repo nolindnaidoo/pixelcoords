@@ -521,16 +521,19 @@ fn doctor_refuses_a_config_file_that_was_named_but_is_not_there() {
 }
 
 /// The other half: with no `--config` at all, an absent file at the default
-/// location is normal and must stay healthy. Otherwise the fix above turns
-/// every fresh install unhealthy.
+/// location is normal and must not be complained about. Otherwise the fix
+/// above turns every fresh install unhealthy.
+///
+/// Read off the config verdict rather than the exit code — a headless
+/// runner has no display and is unhealthy for reasons that have nothing to
+/// do with the config file.
 #[test]
 fn doctor_is_content_when_no_config_was_asked_for() {
-    let out = run(&["doctor", "--json"]);
-    assert_eq!(
-        code(&out),
-        0,
-        "a default install is healthy: {}",
-        said(&out)
+    let verdict = config_verdict(&["doctor", "--json"]);
+    let status = verdict["status"].as_str().unwrap_or_default();
+    assert!(
+        status.contains("defaults in effect") || status.contains("no config directory"),
+        "no --config means defaults, not a complaint: {verdict}"
     );
 }
 
@@ -596,8 +599,8 @@ fn doctor_accepts_a_hotkey_it_can_bind() {
         "good-hotkey.toml",
         "[[hotkeys]]\nkey = \"u\"\naction = \"undo\"\n",
     );
-    let out = run(&["doctor", "--config", &path, "--json"]);
-    assert_eq!(code(&out), 0, "{}", said(&out));
+    let verdict = config_verdict(&["doctor", "--config", &path, "--json"]);
+    assert_eq!(verdict["status"], "loaded", "{verdict}");
 }
 
 // ---------------------------------------------------------------------------
