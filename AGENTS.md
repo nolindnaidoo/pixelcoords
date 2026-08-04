@@ -171,6 +171,16 @@ The bar, enforced by review:
   `main.rs`). Follow those patterns for new logic.
 - **Every bug fix ships with a regression test** that fails before the
   fix.
+- **The exit codes belong in `tests/contracts.rs`.** They are the API — a
+  caller programs against "0 means yes, 1 means no, 2 means the question
+  was malformed" — so they are pinned by tests that build sessions by hand
+  and need no display, and therefore run everywhere on every push. A new
+  command adds its refusals there.
+- **Anything needing a screen belongs in `tests/scenarios.rs`**, gated
+  behind `PIXELCOORDS_SCENARIOS` and run by the `scenarios` job on all
+  three platforms. **Never run it on a machine in use** — every score and
+  percentage in it measures whatever is on screen at the time, so a pass
+  is luck and a failure is noise. Push and read CI.
 - **Do not mock the window system.** Window creation, present, event
   routing, real capture, and permission externs are verified by manual
   gates on real hardware per platform, not by unit tests. Roughly half

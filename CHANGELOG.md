@@ -7,6 +7,18 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
+## Where this is going
+
+The feature roadmap is essentially complete. **0.7.x is a stability
+series**: the surface — the CLI, the session schema, the exit codes, the
+agent tools — is done being added to, and what lands here from now on is
+bug fixes. Something to build against without watching for the next thing
+to move.
+
+Every 0.7.x entry below is a fix, and every one was found the same way:
+by asking automation to check something nobody had asked it to check
+before. That is the point of the series.
+
 ## 0.7.5 — 2026-08-04
 
 **`doctor` blessed two config files a launch would reject, and `resume`
@@ -23,8 +35,7 @@ is a typo. `doctor` reported "absent, defaults in effect" and exited 0 for
 both. A unit test asserted that it did, which is how it survived.
 
 **A hotkey this build cannot bind.** `hotkeys` was the one member of the
-config left out of the range check, so `[[hotkeys]] action = "no_such_
-action"` loaded clean, `doctor` called the file healthy, and the overlay
+config left out of the range check, so an unknown `action` under `[[hotkeys]]` loaded clean, `doctor` called the file healthy, and the overlay
 died on it at launch — the exact failure the comment describes.
 
 Both now flip `doctor` to unhealthy and name the file. An absent file at

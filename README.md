@@ -164,16 +164,24 @@ is not a blanket claim.
   measure tool and edge snapping included, and 0.5.1's capture path was
   checked against a real capture.
 - **Windows and Linux** — verified by hand through 0.4.0.
-- **Nothing since 0.5.1 has had a human overlay run on any platform.**
-  That covers 0.5.2's mid-gesture `Shift` fix and 0.6.0's comfort
-  settings, both of which change how the overlay behaves and both of
-  which are backed by headless tests only. 0.7.0's MCP server is not on
-  that list: it adds no overlay code, and it was driven end to end
-  against a real session.
+- **No overlay run since 0.5.1 has been driven by hand on any platform.**
+  0.5.2's mid-gesture `Shift` fix and 0.6.0's comfort settings change how
+  the overlay behaves and are backed by automated tests only. 0.7.0's MCP
+  server is the exception, and only because it is headless: it adds no
+  overlay code and was driven end to end against a real session.
 
-CI runs the full suite on all three platforms every push, and the overlay
-is the part tests cannot speak for. This table is kept honest — claims
-match runs, and where a run has not happened it says so.
+What *is* now checked automatically, on macOS, Windows and Linux, every
+push: the binary driven against a real capture of the runner's screen —
+`shoot`, `find`, `resolve`, `assert`, `diff`, `wait`, `emit`, `rename`,
+every shape kind, all six MCP tools — plus display-free tests pinning
+every exit code across every command. That is a great deal more than it
+was, and it is still not the overlay. Drawing, dragging, undo, the loupe,
+snapping, the permission prompts and `--target` need a person at a
+machine; the open *Hand-verify* issues carry those checklists with setup
+and pass/fail criteria.
+
+This table is kept honest — claims match runs, and where a run has not
+happened it says so.
 
 ## Acting on what you marked
 
