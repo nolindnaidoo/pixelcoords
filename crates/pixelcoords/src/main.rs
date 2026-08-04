@@ -228,8 +228,8 @@ fn run_resume(args: &cli::Cli, path: &std::path::Path, out: Option<PathBuf>) -> 
     let (selections, dropped) = pixelcoords_core::session::restore_selections(&session);
     if !dropped.is_empty() {
         eprintln!(
-            "dropped {} selection(s) that landed outside the target window: {}",
-            dropped.len(),
+            "dropped {} that landed outside the target window: {}",
+            pixelcoords_core::strings::count(dropped.len(), "selection"),
             dropped.join(", ")
         );
     }
@@ -815,7 +815,7 @@ pub(crate) fn session_entry(dir: &std::path::Path) -> Option<SessionEntry> {
         .map(|s| s.label.clone())
         .filter(|l| !l.is_empty())
         .collect();
-    let mut summary = format!("{} selections", session.selections.len());
+    let mut summary = pixelcoords_core::strings::count(session.selections.len(), "selection");
     let shown: Vec<&str> = labels.iter().take(4).map(String::as_str).collect();
     if !shown.is_empty() {
         // Writing to a String cannot fail.
@@ -3146,7 +3146,14 @@ mod tests {
         let sessions = super::sessions_under(&root);
         let names: Vec<&str> = sessions.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["newer", "older"], "newest first, stranger skipped");
-        assert!(sessions[0].summary.contains("1 selections"));
+        // Singular: the picker used to read "1 selections", and this
+        // assertion pinned the bug in place.
+        assert!(
+            sessions[0].summary.contains("1 selection")
+                && !sessions[0].summary.contains("1 selections"),
+            "{}",
+            sessions[0].summary
+        );
         assert!(sessions[0].summary.contains("macos"));
 
         // --last takes the newest; a bare name resolves under the root; a

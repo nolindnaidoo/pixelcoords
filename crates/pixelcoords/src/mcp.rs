@@ -645,7 +645,11 @@ fn tool_sessions(args: &Map<String, Value>) -> Result<Value, String> {
             root.display()
         )
     } else {
-        format!("{} session(s) under {}", listed.len(), root.display())
+        format!(
+            "{} under {}",
+            pixelcoords_core::strings::count(listed.len(), "session"),
+            root.display()
+        )
     };
     Ok(json!({
         "content": [{ "type": "text", "text": summary }],
@@ -667,8 +671,8 @@ fn tool_resolve<P: CaptureProvider>(
     let report = crate::run_resolve(provider, &session, label, space, units, relocate)
         .map_err(|e| format!("{e:#}"))?;
     let summary = format!(
-        "{} region(s) resolved{}",
-        report.results.len(),
+        "{} resolved{}",
+        pixelcoords_core::strings::count(report.results.len(), "region"),
         if relocate { ", relocated" } else { "" }
     );
     Ok(report_result(
@@ -731,7 +735,10 @@ fn tool_assert(args: &Map<String, Value>) -> Result<Value, String> {
     let report = Report::offline(Command::Assert, ok, verdicts);
     Ok(report_result(
         &serde_json::to_value(&report).map_err(|e| format!("serializing the report: {e}"))?,
-        &format!("{hits}/{} point(s) hit", report.results.len()),
+        &format!(
+            "{hits}/{} hit",
+            pixelcoords_core::strings::count(report.results.len(), "point")
+        ),
     ))
 }
 
@@ -785,11 +792,14 @@ fn tool_wait<P: CaptureProvider>(provider: &P, args: &Map<String, Value>) -> Res
     )
     .map_err(|e| format!("{e:#}"))?;
     let summary = if report.ok {
-        format!("condition met after {} poll(s)", report.polls.unwrap_or(0))
+        format!(
+            "condition met after {}",
+            pixelcoords_core::strings::count(report.polls.unwrap_or(0) as usize, "poll")
+        )
     } else {
         format!(
-            "timed out after {} poll(s) — the condition never held",
-            report.polls.unwrap_or(0)
+            "timed out after {} — the condition never held",
+            pixelcoords_core::strings::count(report.polls.unwrap_or(0) as usize, "poll")
         )
     };
     Ok(report_result(
@@ -806,7 +816,10 @@ fn tool_find<P: CaptureProvider>(provider: &P, args: &Map<String, Value>) -> Res
     let found = report.results.iter().filter(|r| r.found).count();
     Ok(report_result(
         &serde_json::to_value(&report).map_err(|e| format!("serializing the report: {e}"))?,
-        &format!("{found}/{} region(s) located", report.results.len()),
+        &format!(
+            "{found}/{} located",
+            pixelcoords_core::strings::count(report.results.len(), "region")
+        ),
     ))
 }
 
@@ -834,11 +847,14 @@ fn tool_diff<P: CaptureProvider>(provider: &P, args: &Map<String, Value>) -> Res
         .filter(|r| r.diff.changed_pct > tolerance)
         .count();
     let summary = if report.ok {
-        format!("{} region(s) within tolerance", report.results.len())
+        format!(
+            "{} within tolerance",
+            pixelcoords_core::strings::count(report.results.len(), "region")
+        )
     } else {
         format!(
-            "{over}/{} region(s) changed beyond tolerance",
-            report.results.len()
+            "{over}/{} changed beyond tolerance",
+            pixelcoords_core::strings::count(report.results.len(), "region")
         )
     };
     Ok(report_result(

@@ -7,6 +7,20 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
+## 0.7.2 — 2026-08-04
+
+**"1 selections."** The resume picker could not count, and a test asserted
+that it could not — the string was pinned in place by
+`resume_resolution_orders_names_and_rejects_strangers`.
+
+The MCP tools had the same fault in its form-letter dress: `1 region(s)
+resolved`, `1 point(s) hit`, `1 poll(s)`, `1 session(s)`. Those are what a
+model reads back after asking where to click.
+
+Counts are written in one place now — `strings::count` — and read `1
+region` or `n regions` everywhere they appear: the resume picker, the
+dropped-selection warning, and all six MCP tool summaries.
+
 ## 0.7.1 — 2026-08-04
 
 ### MCP callers are no longer told to fix flags they never used

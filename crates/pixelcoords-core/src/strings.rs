@@ -69,3 +69,36 @@ pub const EN: Strings = Strings {
     hud_snap_row_on: "edge snap: on",
     hud_snap_row_off: "edge snap: off",
 };
+
+/// `1 region`, `2 regions` — a count with its noun, pluralized by adding
+/// an `s`.
+///
+/// Every noun this is used with pluralizes that way: region, selection,
+/// session, point, poll. One that does not can be written by hand rather
+/// than teaching this English.
+///
+/// Small, and worth having in one place. These counts appear in what the
+/// MCP tools tell a model and in the resume picker a human reads, and
+/// `1 selections` reads as a tool that is not paying attention — which is
+/// the opposite of what a tool whose whole claim is careful measurement
+/// wants to convey.
+#[must_use]
+pub fn count(n: usize, singular: &str) -> String {
+    if n == 1 {
+        format!("1 {singular}")
+    } else {
+        format!("{n} {singular}s")
+    }
+}
+
+#[cfg(test)]
+mod count_tests {
+    use super::count;
+
+    #[test]
+    fn one_is_singular_and_the_rest_are_not() {
+        assert_eq!(count(1, "region"), "1 region");
+        assert_eq!(count(0, "region"), "0 regions");
+        assert_eq!(count(2, "poll"), "2 polls");
+    }
+}
