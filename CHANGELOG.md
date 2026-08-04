@@ -7,6 +7,32 @@ schema; **patch** (0.x.y) for fixes. The version keeps incrementing
 through 0.x — there is no 1.0 planned, so read the entry below, not the
 version number, for what changed under you.
 
+## 0.7.3 — 2026-08-04
+
+**`resolve` aimed at regions with no interior, and contradicted itself
+doing it.**
+
+`click_point` promises an interior point, and for anything the overlay can
+draw it delivers one — the overlay discards shapes below its commit
+threshold, so nothing you mark by hand is degenerate. But the session
+format is public, and a file written by something else can hold a
+zero-area rect, a polygon of fewer than three vertices, or a triangle
+whose points are collinear. For those it returned a fabricated point and
+exited 0.
+
+The two halves of the tool then disagreed: `resolve` said click here,
+`assert` said that point is not in the region. Six of seven degenerate
+shapes did this. A rect with negative extents resolved to a *negative*
+coordinate, off every screen; an empty polygon resolved to the origin.
+
+The hit test is the definition of inside, so `resolve` was the wrong one.
+It now checks its own answer against the hit test and refuses when the
+region does not cover it — naming the selection, its label, and the kind
+of shape. A zero-radius circle still resolves, because `assert` agrees its
+centre is inside; the fix removes contradictions, notedge cases.
+
+Nothing changes for a session marked in the overlay.
+
 ## 0.7.2 — 2026-08-04
 
 **"1 selections."** The resume picker could not count, and a test asserted
