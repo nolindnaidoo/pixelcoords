@@ -238,3 +238,45 @@ CHANGELOG / this file), and honest — claims in docs must match the code.
 - If docs describe the thing you changed, update them in the same PR —
   README, CHANGELOG, `config.example.toml`, and this file are part of the
   code.
+
+**The PR title is the commit message.** Merges are squashes, so the
+title is what lands on `main` and what `git log` shows forever. CI
+checks it against the format below and fails the PR if it does not
+match; individual commit messages inside the PR are not checked,
+because the squash discards them.
+
+### Conventional commits
+
+The subject line follows
+[Conventional Commits](https://www.conventionalcommits.org):
+
+```
+type(optional-scope): imperative subject
+```
+
+`type` is one of **feat · fix · docs · style · refactor · perf · test ·
+build · ci · chore · revert**. A scope is optional and free-form —
+`fix(locate):` and `fix:` are both fine; use one when it tells the reader
+where to look.
+
+Append `!` after the type or scope for a breaking change:
+`feat(protocol)!: rename the wait verb`.
+
+**Everything else about a commit stays as it was.** The subject is still
+imperative and still says what changed rather than which files moved; the
+body still carries the *why* and the user-visible consequence, at whatever
+length that takes. The prefix is a label on good prose, not a replacement
+for it:
+
+```
+fix(locate): refuse a region with no interior
+
+`click_point` promises an interior point, and for anything the overlay
+can draw it delivers one. A degenerate shape has none, and it returned a
+fabricated point with `ok: true` regardless...
+```
+
+**CHANGELOG.md is not generated from these.** It is written by hand,
+because an entry that explains why a bug mattered is worth more than a
+list of subjects. The prefix helps someone scan `git log`; it does not
+replace the changelog.
