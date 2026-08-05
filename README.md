@@ -44,22 +44,14 @@ ready-to-paste click code for your automation stack.
 
 ## Install
 
-**macOS, with Homebrew:**
+| | |
+|---|---|
+| **macOS** | `brew tap nolindnaidoo/tap && brew install pixelcoords` |
+| **Windows** | `winget install nolindnaidoo.pixelcoords` |
+| **Anywhere with Rust 1.88+** | `cargo install pixelcoords` |
+| **No toolchain** | prebuilt binaries on the [releases page](https://github.com/nolindnaidoo/pixelcoords/releases) — download, unpack, run |
 
-```bash
-brew tap nolindnaidoo/tap
-brew install pixelcoords
-```
-
-Prebuilt binaries for macOS, Windows, and Linux are on the
-[releases page](https://github.com/nolindnaidoo/pixelcoords/releases) —
-download, unpack, run. Or with cargo (Rust 1.88+):
-
-```bash
-cargo install pixelcoords
-```
-
-Linux needs build dependencies first:
+Building on Linux needs the capture stack first:
 
 ```bash
 sudo apt-get install -y libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev \
