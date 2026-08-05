@@ -84,6 +84,42 @@ jobs:
           xvfb-run -a --server-args="-screen 0 1280x1024x24" \
             cargo test --test scenarios -- --test-threads=1
 
+  # The PR title is the commit message: merges here are squashes, so the
+  # title is what lands on `main` and what `git log` shows forever.
+  # Individual commit messages inside the PR are not checked -- the squash
+  # discards them, so linting them would be friction with no artifact.
+  #
+  # Inline rather than a third-party action: it is one regex, and an action
+  # would be a supply-chain dependency for something grep already does.
+  commit-format:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: The title is a conventional commit
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          printf 'title: %s\n' "$TITLE"
+          if printf '%s' "$TITLE" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+'; then
+            echo "ok"; exit 0
+          fi
+          cat >&2 <<'MSG'
+
+          Not a conventional commit subject.
+
+            type(optional-scope): imperative subject
+
+          type is one of: feat fix docs style refactor perf test build ci chore revert
+          scope is optional and free-form. Append ! for a breaking change.
+
+            fix(locate): refuse a region with no interior
+            docs: say what the release actually verified
+            feat(protocol)!: rename the wait verb
+
+          MSG
+          exit 1
+
   msrv:
     runs-on: ubuntu-24.04
     steps:
