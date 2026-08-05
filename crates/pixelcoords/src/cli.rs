@@ -56,7 +56,7 @@ pub struct Cli {
     #[arg(
         long,
         value_name = "SPEC",
-        help = "Bind a key: KEY=ACTION[,EDGE][,WHEN]; repeatable.\nEDGE: press|release|repeat. WHEN: has_selection|cursor_in"
+        help = "Bind a key: KEY=ACTION[,EDGE][,WHEN]; repeatable.\nKEY: a single character, `tab`, or `capslock`.\nACTION: quit save next_tool delete_at_cursor label_edit_at_cursor\n        undo redo cycle_overlap toggle_panel name_session\n        rotate_ccw rotate_cw release_monitor toggle_snap next_theme\nEDGE: press|release|repeat. WHEN: has_selection|cursor_in"
     )]
     pub bind: Vec<String>,
 
@@ -174,8 +174,8 @@ pub enum Command {
         name: String,
     },
     /// Where to act for a session's labels, right now: the click point per
-    /// selection in the space and units your API speaks. Exits 0 resolved,
-    /// 1 not resolvable, 2 on error
+    /// selection in the space and units your API speaks. Prints a JSON
+    /// report; exits 0 resolved, 1 not resolvable, 2 on error
     Resolve {
         /// Path to a session.json, or the directory containing one
         #[arg(long, value_name = "PATH")]

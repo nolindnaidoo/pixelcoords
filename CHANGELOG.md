@@ -19,6 +19,27 @@ Every 0.7.x entry below is a fix, and every one was found the same way:
 by asking automation to check something nobody had asked it to check
 before. That is the point of the series.
 
+## 0.7.6 — 2026-08-04
+
+**`--bind` would not tell you what a binding looks like.**
+
+The help gave the shape — `KEY=ACTION[,EDGE][,WHEN]` — and spelled out
+`EDGE` and `WHEN`, then said nothing about the two parts you actually have
+to get right. A key must be a single character, `tab`, or `capslock`;
+`--bind F5=undo` is a startup error and `--help` gave no hint of it. Both
+are named now, along with every action.
+
+**Two actions were bindable and undocumented.** `toggle_snap` and
+`next_theme` parse fine and appear nowhere in
+`docs/CONFIGURATION.md`, so the only way to find them was to read the
+source. A binding nobody can discover is a feature that does not exist.
+The list is complete now, and an exhaustive match over `Action` keeps it
+that way: a new action will not compile until the docs name it.
+
+**`resolve` did not say it prints JSON.** Every sibling command's
+description does, and this one always writes a JSON report to stdout —
+enough to make a reader look for a `--json` flag that does not exist.
+
 ## 0.7.5 — 2026-08-04
 
 **`doctor` blessed two config files a launch would reject, and `resume`

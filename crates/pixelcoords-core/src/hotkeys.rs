@@ -452,4 +452,72 @@ mod tests {
             Some(Action::ToggleSnap),
         );
     }
+
+    /// Every action must be documented, and documented under the spelling
+    /// the parser accepts.
+    ///
+    /// `toggle_snap` and `next_theme` were both bindable and both absent
+    /// from the list in `docs/CONFIGURATION.md`, so the only way to find
+    /// them was to read the source. A binding nobody can discover is a
+    /// feature that does not exist.
+    ///
+    /// The match is exhaustive on purpose: a new action will not compile
+    /// until someone decides what to call it in the docs.
+    #[test]
+    fn every_action_is_documented_under_the_name_that_parses() {
+        const DOCS: &str = include_str!("../../../docs/CONFIGURATION.md");
+
+        let spelling = |action: Action| -> &'static str {
+            match action {
+                Action::Quit => "quit",
+                Action::Save => "save",
+                Action::NextTool => "next_tool",
+                Action::DeleteAtCursor => "delete_at_cursor",
+                Action::LabelEditAtCursor => "label_edit_at_cursor",
+                Action::Undo => "undo",
+                Action::Redo => "redo",
+                Action::CycleOverlap => "cycle_overlap",
+                Action::TogglePanel => "toggle_panel",
+                Action::NameSession => "name_session",
+                Action::RotateCcw => "rotate_ccw",
+                Action::RotateCw => "rotate_cw",
+                Action::ReleaseMonitor => "release_monitor",
+                Action::ToggleSnap => "toggle_snap",
+                Action::NextTheme => "next_theme",
+            }
+        };
+
+        let every = [
+            Action::Quit,
+            Action::Save,
+            Action::NextTool,
+            Action::DeleteAtCursor,
+            Action::LabelEditAtCursor,
+            Action::Undo,
+            Action::Redo,
+            Action::CycleOverlap,
+            Action::TogglePanel,
+            Action::NameSession,
+            Action::RotateCcw,
+            Action::RotateCw,
+            Action::ReleaseMonitor,
+            Action::ToggleSnap,
+            Action::NextTheme,
+        ];
+
+        for action in every {
+            let name = spelling(action);
+            assert!(
+                DOCS.contains(name),
+                "{name:?} is bindable and undocumented in CONFIGURATION.md"
+            );
+            // And the spelling has to be one the parser answers to, or the
+            // documentation is pointing at something that does not work.
+            assert_eq!(
+                parse_action(name).ok(),
+                Some(action),
+                "the documented spelling {name:?} does not parse"
+            );
+        }
+    }
 }
