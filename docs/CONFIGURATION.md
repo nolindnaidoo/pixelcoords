@@ -147,7 +147,8 @@ or per run: `--bind KEY=ACTION[,EDGE][,WHEN]` (repeatable).
 - **KEY** — a single character, `tab`, or `capslock`.
 - **ACTION** — `quit`, `save`, `next_tool`, `delete_at_cursor`,
   `label_edit_at_cursor`, `undo`, `redo`, `cycle_overlap`, `toggle_panel`,
-  `name_session`, `release_monitor`, `rotate_ccw`, `rotate_cw`.
+  `name_session`, `release_monitor`, `rotate_ccw`, `rotate_cw`,
+  `toggle_snap`, `next_theme`.
 - **EDGE** — `press` (default), `release`, or `repeat` (fires while held).
 - **WHEN** — `has_selection` (at least one shape exists) or `cursor_in`
   (the cursor is over a shape). Omitted means always.
