@@ -19,6 +19,29 @@ Every 0.7.x entry below is a fix, and every one was found the same way:
 by asking automation to check something nobody had asked it to check
 before. That is the point of the series.
 
+## 0.7.7 — 2026-08-05
+
+**Housekeeping, no behaviour change.** Nothing a user of the CLI does
+differently; one thing a user of the *crate* will notice.
+
+**Seven modules left the public API.** `draw`, `font`, `strings`,
+`selection`, `snap`, `hotkeys` and `matcher` are `pub` only because the
+binary is a separate crate and can reach nothing else — an overlay
+rasterizer tied to softbuffer's pixel format, an embedded font, the
+overlay's string table, editing state and undo stacks. They now carry
+`#[doc(hidden)]`: still reachable, gone from docs.rs, and outside this
+crate's versioning. That matters before 1.0, when every `pub` item becomes
+a permanent commitment.
+
+`Measure` moved with them — it is defined in `selection` but round-trips
+through the session, so it is re-exported from `session` where it has a
+documented home rather than keeping an overlay-state module public to
+reach one type.
+
+Also: install instructions for every channel with the caveat beside each
+one, winget manifests, and CI that checks PR titles are conventional
+commits.
+
 ## 0.7.6 — 2026-08-04
 
 **`--bind` would not tell you what a binding looks like.**
