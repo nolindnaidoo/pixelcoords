@@ -44,6 +44,13 @@ ready-to-paste click code for your automation stack.
 
 ## Install
 
+**macOS, with Homebrew:**
+
+```bash
+brew tap nolindnaidoo/tap
+brew install pixelcoords
+```
+
 Prebuilt binaries for macOS, Windows, and Linux are on the
 [releases page](https://github.com/nolindnaidoo/pixelcoords/releases) —
 download, unpack, run. Or with cargo (Rust 1.88+):
