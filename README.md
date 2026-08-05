@@ -44,22 +44,14 @@ ready-to-paste click code for your automation stack.
 
 ## Install
 
-**macOS, with Homebrew:**
+| Route | Command | Worth knowing |
+|---|---|---|
+| **Homebrew** | `brew tap nolindnaidoo/tap`<br>`brew install pixelcoords` | **macOS only.** The formula has no Linux build — the Linux binary needs a capture stack (`libxcb`, `libpipewire`, `libegl`, `libgbm`) wired to system paths Homebrew does not own. Tap once; after that it installs like any formula. |
+| **winget** | `winget install nolindnaidoo.pixelcoords` | Windows 10+. A **portable** install: winget unpacks the exe and registers a PATH alias, so there is nothing in Add/Remove Programs. |
+| **cargo** | `cargo install pixelcoords` | Any platform, needs **Rust 1.88+**. It compiles the capture stack from source, so expect minutes rather than seconds. On Linux install the build dependencies below first. |
+| **Prebuilt binary** | [releases page](https://github.com/nolindnaidoo/pixelcoords/releases) | macOS (arm64 + x86_64), Windows, Linux. No toolchain needed — download, unpack, run. **No auto-update**: you come back here for the next version. Each release ships checksums. |
 
-```bash
-brew tap nolindnaidoo/tap
-brew install pixelcoords
-```
-
-Prebuilt binaries for macOS, Windows, and Linux are on the
-[releases page](https://github.com/nolindnaidoo/pixelcoords/releases) —
-download, unpack, run. Or with cargo (Rust 1.88+):
-
-```bash
-cargo install pixelcoords
-```
-
-Linux needs build dependencies first:
+Building on Linux needs the capture stack first:
 
 ```bash
 sudo apt-get install -y libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev \
