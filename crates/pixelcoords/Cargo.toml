@@ -21,7 +21,7 @@ categories = [
 ]
 
 [dependencies]
-pixelcoords-core = { path = "../pixelcoords-core", version = "0.7.1" }
+pixelcoords-core = { path = "../pixelcoords-core", version = "0.7.6" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
