@@ -9,6 +9,12 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// The in-memory form of a saved ruler. Re-exported here because it is
+/// part of the session round trip -- `with_measures` takes them and
+/// `restore_measures` returns them -- while the module it is defined in
+/// holds overlay editing state that is not public API.
+pub use crate::selection::Measure;
+
 use crate::geometry::{Point, Shape, Size, ToolKind};
 use crate::selection::Selection;
 
@@ -371,7 +377,7 @@ impl SessionFile {
     /// the colors are: a session without measures is an ordinary session,
     /// so it cannot be required of every caller.
     #[must_use]
-    pub fn with_measures(mut self, measures: &[crate::selection::Measure]) -> Self {
+    pub fn with_measures(mut self, measures: &[Measure]) -> Self {
         self.measures = measures
             .iter()
             .map(|m| {
@@ -595,7 +601,7 @@ impl SessionFile {
 /// a hand-edited file cannot smuggle a length that does not match its
 /// line.
 #[must_use]
-pub fn restore_measures(file: &SessionFile) -> Vec<crate::selection::Measure> {
+pub fn restore_measures(file: &SessionFile) -> Vec<Measure> {
     file.measures
         .iter()
         .map(|record| crate::selection::Measure {
