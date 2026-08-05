@@ -28,221 +28,202 @@
   <img src="https://github.com/nolindnaidoo/pixelcoords/raw/main/docs/assets/demo.gif" alt="pixelcoords demo: freeze a window, mark shapes, save machine-readable coordinates" style="max-width: 100%; height: auto;" />
 </p>
 
-Every screen tool that measures pixels ends at a human's eyeball: a
-ruler shows you a number, a screenshot app draws an arrow, a mouse
-tracker prints a position you copy by hand. pixelcoords starts from a
-different premise — **the real consumer of a coordinate is a machine.**
+> **Useful?** A star is how other developers find it —
+> [★ GitHub](https://github.com/nolindnaidoo/pixelcoords) ·
+> [pixelcoords.dev](https://pixelcoords.dev)
 
-It freezes your screen so nothing moves while you measure, then lets you
-mark regions with real shapes — rectangles, ellipses, triangles, N-gons,
-freehand — rotated, labeled, and placed to the exact pixel with a loupe
-and arrow-key nudging, plus rulers that report distance and angle between
-any two points. Marks snap to the UI edges already in the frozen image,
-so a rect around a button lands on the button. What you mark becomes
-data, not a picture: versioned JSON in physical pixels with per-monitor
-DPI scale, the color under each click point, labeled crops and
-frame-sized cutouts, and ready-to-paste click code for your automation
-stack.
+Every screen tool that measures pixels ends at a human's eyeball: a ruler
+shows you a number, a screenshot app draws an arrow, a mouse tracker prints
+a position you copy by hand. pixelcoords starts from a different premise —
+**the real consumer of a coordinate is a machine.**
 
-Then it answers the questions a machine actually asks about that data —
-each with an exit code and one JSON shape, so CI and computer-use agents
-can script them. Did this click land in the right region, for one point
-or a whole trajectory. Where do I click *now*, in the units my input API
-wants, on the display it's actually on. Wait until this dialog is back.
-Do these regions still look right. Where did this region move to when the
-UI drifted out from under my coordinates. Sessions reopen and edit like
-documents.
-
-Those questions are also served over MCP, so a model can ask them
-directly instead of being handed a screenshot: `pixelcoords mcp`, six
-read-only tools, no subprocess to wire up. Asking a marked session where
-to click reads a file and answers in microseconds and sends no image at
-all — the alternative is a screenshot per step, and a long computer-use
-task runs to hundreds of steps. A human still marks the regions; the
-model does the rest.
-
-No account, no network, no toolkit — one small native binary for macOS,
-Windows, and Linux. MIT-licensed, because the aim was to build the best
-tool in this category and give it away.
+Freeze the screen so nothing moves while you measure, mark regions with real
+shapes, and what you marked becomes **data, not a picture**: versioned JSON
+in physical pixels with per-monitor DPI scale, labeled crops, and
+ready-to-paste click code for your automation stack.
 
 ## Install
 
 Prebuilt binaries for macOS, Windows, and Linux are on the
 [releases page](https://github.com/nolindnaidoo/pixelcoords/releases) —
-download, unpack, run. Or build it with cargo:
+download, unpack, run. Or with cargo (Rust 1.88+):
 
 ```bash
 cargo install pixelcoords
 ```
 
-Rust 1.88+ for the cargo route. On Linux it needs build dependencies
-first:
+Linux needs build dependencies first:
 
 ```bash
 sudo apt-get install -y libxcb1-dev libxcb-randr0-dev libpipewire-0.3-dev \
   libclang-dev libegl1-mesa-dev libgbm-dev pkg-config
 ```
 
-macOS asks for Screen Recording permission on first run —
-[docs/TROUBLESHOOTING.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/TROUBLESHOOTING.md) covers it.
+macOS asks for Screen Recording permission on first run.
 
 ## Sixty seconds
 
 ```bash
-pixelcoords                      # screen freezes; drag shapes, A labels, S saves
-# → Downloads/pixelcoords-captures/<timestamp>/
-#   session.json  screenshot-0.png  cutout-primary-0.png  cutout-inverse-0.png  crop-0-submit.png
-
-pixelcoords assert --session <dir> --point 812,440 --expect submit
-# exit 0: that point is inside the region you labeled "submit"
-# --stdin scores a whole trajectory in one process, one point per line
-
-pixelcoords resolve --session <dir> --label submit --units auto
-# where to click, right now, in the units your input API actually wants
-
-pixelcoords emit --session <dir> --format pyautogui
-# ready-to-paste click code, coordinate conventions already handled
-
-pixelcoords wait --session <dir> --label dialog --for match
-# block until that region is back on screen; exit 1 if it never arrives
-
-pixelcoords diff --session <dir> --against baseline/
-# did those regions still look right? visual regression, per region
-
-pixelcoords find --session <dir>
-# the UI moved? every region re-located by its saved crop, deltas included
-
-pixelcoords mcp                   # serve all of the above to an LLM over stdio
-# read-only: it asks about sessions you marked, it cannot make one
-
-pixelcoords resume                # pick any saved session, keep editing it
-
-pixelcoords --monitor primary     # freeze one display instead of all of them
-# also an index, or part of a display's name: --monitor 0,DELL
+pixelcoords                        # freeze every screen; drag to mark, A labels, S saves
+pixelcoords resolve --session ~/Downloads/pixelcoords-captures/<stamp>
 ```
 
-Window-attached sessions with `--target "Title"` (macOS/Windows/X11)
-or `--pick` (Wayland): drawing is locked to the window, and every mark
-records `window_px` alongside the usual coordinates so the session stays
-valid when the window moves. Freezing every screen stays the default;
-`--monitor` narrows it, `[capture] monitors` makes that permanent for a
-double-clicked launch, and `R` releases one display mid-session while the
-rest stay frozen. Every command speaks exit codes and JSON where a
-script would care — the complete reference with every flag is
-[docs/CLI.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CLI.md).
+`resolve` prints the click point for every label you marked, in the space
+and units your automation API speaks:
 
-## Controls
+```json
+{ "label": "submit", "monitor": 0, "scale": 2.0, "units": "logical",
+  "point": { "x": 812, "y": 440 } }
+```
 
-Drag draws; the on-screen panel teaches everything else. The ones that
-matter: `W` cycles the tool, `A` labels, `S` saves, `Z` undoes, `X` turns
-edge snapping off when you want a placement left exactly where you put
-it, hold `M` for a pixel loupe, `Esc` backs out / quits. Full table in
-[docs/CLI.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CLI.md); every key is rebindable via
-[docs/CONFIGURATION.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CONFIGURATION.md).
+That is the whole loop: **mark once, resolve forever.** The session is a
+directory of JSON and PNGs you can commit.
 
-## Platform status
+## Commands
 
-| Platform | State |
-|----------|-------|
-| macOS | Supported — primary development platform |
-| Windows | Supported — verified by hand on Windows 11 |
-| Linux (X11) | Supported — verified by hand on GNOME 46; every feature works |
-| Linux (Wayland) | Screen coordinates + `--pick` window marking — verified by hand on GNOME 46; no `windows` / `--target` (the protocol withholds window geometry) |
+| Command | What it does |
+|---|---|
+| `pixelcoords` | Freeze every screen and open the marking overlay |
+| `resolve` | Where to click for each label, in your API's space and units |
+| `find` | Re-locate regions in a fresh capture — for when the UI moved |
+| `assert` | Did this point land in the right region? One point or a stream |
+| `diff` | Do the regions still look like they did? |
+| `wait` | Block until regions match again, or until one stops matching |
+| `emit` | Ready-to-paste click code for pyautogui, cliclick, xdotool, and more |
+| `shoot` | Plain scripted screenshot, no overlay, same DPI handling |
+| `resume` | Reopen a saved session and keep editing |
+| `rename` | Give a session a friendly name for the resume picker |
+| `windows` | List visible windows, for `--target` |
+| `doctor` | Check permissions, config, and the monitor setup |
+| `mcp` | Serve the agent surface over MCP on stdio |
 
-**Multi-monitor and mixed-DPI are verified on real hardware**, on macOS:
-two displays at different scales (a 2x built-in and a 1x external sitting
-at a negative desktop origin), marks placed on both, and every coordinate
-recorded exactly where it was drawn. `find` relocated a region on the
-second display at a perfect score, and releasing one display left the
-other frozen and markable. Linux and Windows multi-monitor remain
-test-only.
+Full reference with every flag:
+**[docs/CLI.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CLI.md)**
 
-Hand-verification is per platform *and* per release, so the table above
-is not a blanket claim.
+## Things worth knowing early
 
-- **macOS** — the overlay was driven by hand through 0.5.0, color readout,
-  measure tool and edge snapping included, and 0.5.1's capture path was
-  checked against a real capture.
-- **Windows and Linux** — verified by hand through 0.4.0.
-- **No overlay run since 0.5.1 has been driven by hand on any platform.**
-  0.5.2's mid-gesture `Shift` fix and 0.6.0's comfort settings change how
-  the overlay behaves and are backed by automated tests only. 0.7.0's MCP
-  server is the exception, and only because it is headless: it adds no
-  overlay code and was driven end to end against a real session.
+**Coordinates are physical pixels, and `--units` is the knob.** A session
+records what the display actually has. `--units auto` converts to what your
+platform's input API expects — logical points on macOS, physical pixels on
+Windows and X11. Guessing wrong on a Retina display puts every click at
+half the intended position.
 
-What *is* now checked automatically, on macOS, Windows and Linux, every
-push: the binary driven against a real capture of the runner's screen —
-`shoot`, `find`, `resolve`, `assert`, `diff`, `wait`, `emit`, `rename`,
-every shape kind, all six MCP tools — plus display-free tests pinning
-every exit code across every command. That is a great deal more than it
-was, and it is still not the overlay. Drawing, dragging, undo, the loupe,
-snapping, the permission prompts and `--target` need a person at a
-machine; the open *Hand-verify* issues carry those checklists with setup
-and pass/fail criteria.
+**Exit codes are the API.** Scripts branch on them:
 
-This table is kept honest — claims match runs, and where a run has not
-happened it says so.
+| Code | Meaning |
+|---|---|
+| 0 | yes — resolved, matched, hit |
+| 1 | a real answer, and it is no — not found, missed, timed out |
+| 2 | the question was malformed — bad label, unreadable session |
 
-## Acting on what you marked
+**Wayland withholds window geometry.** `windows` and `--target` refuse
+there and point you at `--pick` instead. That refusal is deliberate; a
+guessed window position would be worse than no answer.
 
-pixelcoords answers *where is this thing, exactly*. It deliberately stops
-there — it never moves your mouse or types for you.
+**`--min-score` and `--tolerance` are different quantities.** The first is
+a correlation score in `0..=1`; the second is a percentage of pixels in
+`0..=100`. Both are bounds-checked, so a swapped value is refused rather
+than silently matching nothing.
 
-**[pixelactions](https://github.com/nolindnaidoo/pixelactions)** is the
-other half of that loop: it reads a session, performs the interaction —
-click, type, chord, drag, scroll — and confirms it landed, refusing to act
-on any region it cannot still find unambiguously.
+## Configure it
+
+Colors, key bindings, snapping, and overlay behavior live in a config file
+you can also override per run:
 
 ```bash
-pixelactions run --session ~/captures/checkout \
-  click:email type:"a@b.com" click:submit wait:confirmed --yes
+pixelcoords --bind u=undo --config ./my-config.toml
 ```
 
-Driven from a chained command, a reviewable flow file, or a line protocol
-any language can speak. Its logic layer is
-[pixelactions-core](https://github.com/nolindnaidoo/pixelactions), the way
-[pixelcoords-core](https://crates.io/crates/pixelcoords-core) is this
-tool's. Separate binary, separate repository, one-way dependency: this
-project does not know it exists.
+Every setting and every bindable action:
+**[docs/CONFIGURATION.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CONFIGURATION.md)**
+
+## Platform support
+
+| Platform | Capture | Window targeting | Verified by hand |
+|---|---|---|---|
+| macOS | Yes | `--target` | overlay through 0.5.1; multi-monitor + mixed-DPI on real hardware |
+| Windows 11 | Yes | `--target` | through 0.4.0; multi-monitor test-only |
+| Linux (X11) | Yes | `--target` | through 0.4.0; multi-monitor test-only |
+| Linux (Wayland) | Yes, via portal | `--pick` only | through 0.4.0; `windows`/`--target` refuse by design |
+
+Fractional scaling is unverified everywhere. Claims here match runs — where
+a run has not happened it says so, and
+[CONTRIBUTING.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/CONTRIBUTING.md)
+carries the full record.
+
+## Performance
+
+Measured on an Apple M5 Pro, `--release`, at 0.5.3. Reproduce with:
+
+```bash
+cargo run --release -p pixelcoords-core --example bench   # the math
+scripts/bench-cli.sh <session-dir>                        # the round trip
+```
+
+
+| Operation | Size | Median |
+|---|---|---|
+| `resolve`, all labels | 400 selections | 14.3 µs |
+| `assert`, one point | 400 selections | 2.0 µs |
+| `diff`, one region | 160×90 crop | 20.6 µs |
+| `find` (full-frame NCC) | 160×90 crop | 198 ms |
+| `find` (full-frame NCC) | 400×300 crop | 1.40 s |
+
+Resolving is free; **matching is the expensive part**, and it scales with
+crop area rather than screen size. Method and caveats:
+[docs/PERFORMANCE.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/PERFORMANCE.md)
+
+## Testing
+
+| Layer | What it covers |
+|---|---|
+| Unit + property tests | `pixelcoords-core`, **90% line coverage floor per module** |
+| Contract tests | every exit code, every command — no display needed |
+| Scenario tests | the binary driven against a **real display**, on macOS, Windows and Linux every push |
+| Manual gates | the overlay itself — tests cannot speak for it, so it is verified by hand and said so plainly |
+
+659 tests. CI runs fmt, clippy pedantic (`-D warnings`), the suite, MSRV,
+`cargo audit`, and a policy job that fails on any inline `#[allow]`.
 
 ## Non-goals
 
-Knowing what a tool is means knowing what it isn't. These are settled:
-
-- **OCR** — text extraction is a different product; platform tools and
-  Shottr own it.
-- **Live (unfrozen) measurement** — the freeze *is* the thesis: nothing
-  moves between look and click.
-- **Annotation** — arrows, blur, and highlights are a screenshot
-  editor's job; labels here exist for machines, not slides.
-- **Recording / GIF capture** — the product is the frozen instant, not
-  the timeline; ShareX exists.
-- **Cloud upload, sharing, accounts** — offline by design, permanently.
-- **Performing the interaction** — clicking and typing is a different
-  threat model and a different tool; see
-  [pixelactions](https://github.com/nolindnaidoo/pixelactions) above.
-
-What it also doesn't do is decide how much of your machine you may spend.
-Undo history, selection count, and session size are unbounded on purpose,
-and the few ceilings that exist say what they cost —
-[Limits and resources](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CONFIGURATION.md#limits-and-resources)
-lists both.
+Not a screen recorder, not an OCR tool, not a UI-testing framework, and
+**not an executor** — pixelcoords never moves your mouse. It answers
+*where*, and stops. [pixelactions](https://github.com/nolindnaidoo/pixelactions)
+is the other half of that loop.
 
 ## Documentation
 
-- [pixelcoords.dev](https://pixelcoords.dev) — the website: demo, comparisons, how-to
+- **[pixelcoords.dev](https://pixelcoords.dev)** — demo, comparisons, how-to
 - [docs/CLI.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CLI.md) — every command, flag, control, and exit code
 - [docs/OUTPUT.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/OUTPUT.md) — session.json schema, crops, cutouts, jq recipes
 - [docs/CONFIGURATION.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/CONFIGURATION.md) — colors, key bindings, config file
 - [docs/TROUBLESHOOTING.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/TROUBLESHOOTING.md) — fixes, behaviors, FAQ
 - [docs/PERFORMANCE.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/PERFORMANCE.md) — measured timings, and what this tool is not
-- [docs/DEVELOPMENT.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/DEVELOPMENT.md) — building from source, CI gates, tests, releases
+- [docs/DEVELOPMENT.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/DEVELOPMENT.md) — building, CI gates, tests, releases
 - [CHANGELOG.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/CHANGELOG.md) — what changed and why
-- [CONTRIBUTING.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/CONTRIBUTING.md) — bug reports and pull requests
-- [pixelactions](https://github.com/nolindnaidoo/pixelactions) — the executor half: act on a session, and confirm it landed
+
+## Also by nolindnaidoo
+
+**Rust**
+
+- **[pixelactions](https://github.com/nolindnaidoo/pixelactions)** - Perform the interaction and confirm it landed · [pixelactions.dev](https://pixelactions.dev)
+
+**VS Code Extensions** — every tool in the family, one page: **[letools.dev](https://letools.dev)**
+
+- **[String-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.string-le)** - Extract string values for i18n from JSON, YAML, CSV, TOML, INI, and .env
+- **[Numbers-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.numbers-le)** - Extract numeric values from JSON, YAML, CSV, TOML, INI, and .env
+- **[EnvSync-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.envsync-le)** - Spot missing keys across your .env files, with a markdown report
+- **[Paths-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.paths-le)** - Extract file paths from JS/TS imports, JSON, HTML, CSS, TOML, CSV, and .env
+- **[Secrets-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.secrets-le)** - Detect and sanitize credentials locally, before you commit
+- **[Scrape-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.scrape-le)** - Check whether a page is scrapeable before you write the scraper
+- **[Colors-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.colors-le)** - Extract and analyze colors from CSS, SCSS, LESS, Stylus, HTML, JS/TS, and SVG
+- **[URLs-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.urls-le)** - Extract URLs from documentation, configs, and code
+- **[Regex-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.regex-le)** - Find, test, and validate the regex patterns in the current file
+- **[Dates-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.dates-le)** - Extract and analyze dates from logs, configs, and code
+
+**Contact Developer** — [GitHub](https://github.com/nolindnaidoo) · [LinkedIn](https://www.linkedin.com/in/nolindnaidoo/)
 
 ## License
 
 MIT — see [LICENSE](https://github.com/nolindnaidoo/pixelcoords/blob/main/LICENSE). Bundled: JetBrains Mono (OFL 1.1).
-
-Built by [nolindnaidoo](https://github.com/nolindnaidoo).
