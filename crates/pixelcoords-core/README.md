@@ -1,59 +1,32 @@
 # pixelcoords-core
 
-The platform-free core of [pixelcoords](https://crates.io/crates/pixelcoords):
-the geometry, the `session.json` schema, coordinate spaces and units,
-template relocation, point verdicts, click-point resolution, region
-diffing, and click-code generation — with no window system, no capture
-backend, and `#![forbid(unsafe_code)]`.
+<p align="center">
+  <a href="https://crates.io/crates/pixelcoords-core"><img src="https://img.shields.io/crates/v/pixelcoords-core.svg" alt="crates.io" /></a>
+  <a href="https://docs.rs/pixelcoords-core"><img src="https://img.shields.io/docsrs/pixelcoords-core.svg" alt="docs.rs" /></a>
+  <img src="https://img.shields.io/badge/rustc-1.88+-93450a.svg" alt="MSRV: Rust 1.88+" />
+  <img src="https://img.shields.io/badge/unsafe-forbidden-success.svg" alt="forbid(unsafe_code)" />
+  <a href="https://github.com/nolindnaidoo/pixelcoords/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
+</p>
 
-**Want the tool?** Install the binary: `cargo install pixelcoords`.
-**Want to build something on top of it?** That's this crate.
+Every screen tool that measures pixels ends at a human's eyeball: a ruler
+shows you a number, a screenshot app draws an arrow, a mouse tracker prints
+a position you copy by hand. pixelcoords starts from a different premise —
+**the real consumer of a coordinate is a machine.**
+
+This is its platform-free core: the geometry, the `session.json` schema,
+coordinate spaces and units, template relocation, point verdicts,
+click-point resolution, region diffing, and click-code generation — with no
+window system, no capture backend, and `#![forbid(unsafe_code)]`.
+
+**Want the tool?** `cargo install pixelcoords`.
+**Want to build on it?** This crate.
 
 ```toml
 [dependencies]
 pixelcoords-core = "0.7"
 ```
 
-## What you'd use it for
-
-A pixelcoords session is a human's answer to "where is this thing on
-screen, exactly" — labeled regions, pixel-exact, with crops. This crate
-is everything you need to *consume* that answer in Rust: read the
-schema, resolve a label to the point you should click, ask whether a
-region is still where it was, or check that a coordinate landed inside
-it.
-
-That covers most tools built here: test harnesses that assert on screen
-positions, automation runners, screenshot annotators, converters between
-DPI spaces, and alternative front-ends over the same session format.
-
-**You may not need this crate at all.** If you only want to read
-`session.json` from another language, the schema is plain JSON and fully
-documented in
-[docs/OUTPUT.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/OUTPUT.md).
-Reach for this crate when you want the *behavior* too — the matching,
-the scoring, the geometry — not just the data.
-
-## The coordinate model, which you must get right
-
-Everything else here is downstream of this, and it is the thing tools
-get wrong.
-
-- A session stores **physical pixels**, twice per selection: `px` is
-  **monitor-local**, `global_px` is the same region on the **global
-  desktop grid**.
-- Each `MonitorRecord` carries `origin_px` (its position on that global
-  grid) and `scale` (its DPI factor), so
-  `global = monitor.origin_px + local`.
-- **There is no universal logical space, and the schema does not pretend
-  there is.** For logical points, divide by *the containing monitor's*
-  scale — never a global one. Mixed-DPI desktops are the normal case.
-- Input APIs disagree about which space they want: macOS `CGEvent` takes
-  logical points; Windows `SendInput` and X11 `XTEST` take physical
-  pixels. Converting to the wrong one clicks the wrong place without
-  erroring.
-
-## Read a session and resolve its click points
+## Start here
 
 The core loop of nearly every consumer: for each labeled region, find
 the point you would actually click.
@@ -108,6 +81,25 @@ for selection in &session.selections {
 #   ]
 # }"#;
 ```
+
+## The coordinate model, which you must get right
+
+Everything else here is downstream of this, and it is the thing tools
+get wrong.
+
+- A session stores **physical pixels**, twice per selection: `px` is
+  **monitor-local**, `global_px` is the same region on the **global
+  desktop grid**.
+- Each `MonitorRecord` carries `origin_px` (its position on that global
+  grid) and `scale` (its DPI factor), so
+  `global = monitor.origin_px + local`.
+- **There is no universal logical space, and the schema does not pretend
+  there is.** For logical points, divide by *the containing monitor's*
+  scale — never a global one. Mixed-DPI desktops are the normal case.
+- Input APIs disagree about which space they want: macOS `CGEvent` takes
+  logical points; Windows `SendInput` and X11 `XTEST` take physical
+  pixels. Converting to the wrong one clicks the wrong place without
+  erroring.
 
 ## Geometry
 
@@ -263,45 +255,69 @@ tool: pyautogui makes its process DPI-aware on import, so it addresses
 physical pixels on Windows but logical points on macOS. `cliclick` and
 `xdotool` each exist on one platform and don't branch.
 
-## The modules, and how much they move
+## Modules
 
-| Module | What it is | Reuse |
+| Module | What it owns | Moves? |
 |---|---|---|
-| `session` | the `session.json` schema | **the contract** — versioned, grows additively |
-| `geometry` | shapes, hit-testing, rotation, polygon math | stable, pure arithmetic |
-| `space` | coordinate origins and units, and the conversion between them | stable shape |
-| `report` | the `Report<T>` envelope every command prints | **the CLI contract** — versioned |
-| `locate` | masked template matching, scoring, fixed-location `TemplateStats` | stable shape, tuned thresholds |
-| `verdict` | point-in-region assessment | stable shape |
-| `resolve` | click points per selection, in a chosen space and units | stable shape |
-| `diff` | per-region masked pixel comparison | stable shape |
-| `wait` | poll budgets and the match/change conditions | stable shape |
-| `emit` | pyautogui / cliclick / xdotool generators | stable shape |
-| `points`, `duration` | the `X,Y[,label]` stream grammar, `30s`/`500ms` durations | strict parsers, stable |
-| `selection` | the undo/redo edit engine | overlay internals |
-| `draw`, `font` | CPU rasterizer, embedded JetBrains Mono | overlay internals |
-| `hotkeys`, `config`, `strings`, `matcher` | binding grammar, strict TOML config, UI text, window-title matching | overlay internals |
+| `session` | the `session.json` schema, parsing, validation | schema 1 since 0.1.0 — additive only |
+| `geometry` | shapes, hit-testing, click points, rotation, bboxes | stable |
+| `space` | monitor/global/window origins, logical ↔ physical | stable |
+| `resolve` | the click point for a label, with drift applied | stable |
+| `locate` | template relocation (NCC), scores, ambiguity | stable |
+| `diff` | did this region change, and by how much | stable |
+| `verdict` | did a point land inside, and what did it land in | stable |
+| `wait` | poll budgets and conditions | stable |
+| `emit` | click code for pyautogui, cliclick, xdotool, and more | grows with targets |
+| `report` | one envelope and schema counter for every command | stable |
+| `points`, `duration`, `snap`, `config`, `strings` | parsing and support | stable |
 
-**Stability, honestly.** This stays on 0.x and shares a version with the
-binary, so a minor bump can change any signature here. **Two things carry
-a real compatibility promise**, and they are versioned separately because
-they version different things: the session schema on disk
-(`session::SCHEMA_VERSION`, still 1) and the documents the commands print
-(`report::CLI_SCHEMA_VERSION`, now 2). Additions to either are optional
-fields, and consumers that ignore unknown keys keep working. The top rows
-are what tools are actually built on; the overlay internals exist to serve
-the binary and move with it. Pin a caret range and read the
-[CHANGELOG](https://github.com/nolindnaidoo/pixelcoords/blob/main/CHANGELOG.md)
-before upgrading.
+Full API, every item:
+**[docs.rs/pixelcoords-core](https://docs.rs/pixelcoords-core)**
 
-Every example above is compiled and run as a doctest in CI, so nothing
-on this page can rot silently.
+## Testing
 
-## See also
+| Layer | What it covers |
+|---|---|
+| Unit tests | every module — **90% line coverage floor per module**, enforced in CI |
+| Property tests | the invariants: a clamped shape stays in bounds, rotation is periodic, a bbox bounds its shape |
+| Doctests | every example in this file compiles and runs — the README *is* the crate docs |
 
-- [pixelcoords](https://crates.io/crates/pixelcoords) — the tool this serves
-- [pixelactions](https://github.com/nolindnaidoo/pixelactions) — the executor half: consumes these sessions and performs the interactions
-- [API docs](https://docs.rs/pixelcoords-core) · [repository](https://github.com/nolindnaidoo/pixelcoords) · [pixelcoords.dev](https://pixelcoords.dev)
-- [docs/OUTPUT.md](https://github.com/nolindnaidoo/pixelcoords/blob/main/docs/OUTPUT.md) — every JSON shape this crate produces
+Examples here are not illustrative. They are `include_str!`'d into the
+crate and run on every push, so an example that stopped compiling would
+fail CI rather than mislead you.
 
-MIT licensed. Bundled font: JetBrains Mono, OFL 1.1.
+## Relationship to the CLI
+
+`pixelcoords` the binary is this crate plus a window system: capture, the
+overlay, permissions, and the subcommands. Anything that can be decided
+without a screen lives here, which is why this crate has no platform code
+and the binary has no geometry.
+
+A session written by any pixelcoords build parses here, and the schema has
+been version 1 since 0.1.0 — additive changes only, so old sessions keep
+working.
+
+## Also by nolindnaidoo
+
+**Rust**
+
+- **[pixelactions](https://github.com/nolindnaidoo/pixelactions)** - Perform the interaction and confirm it landed · [pixelactions.dev](https://pixelactions.dev)
+
+**VS Code Extensions** — every tool in the family, one page: **[letools.dev](https://letools.dev)**
+
+- **[String-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.string-le)** - Extract string values for i18n from JSON, YAML, CSV, TOML, INI, and .env
+- **[Numbers-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.numbers-le)** - Extract numeric values from JSON, YAML, CSV, TOML, INI, and .env
+- **[EnvSync-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.envsync-le)** - Spot missing keys across your .env files, with a markdown report
+- **[Paths-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.paths-le)** - Extract file paths from JS/TS imports, JSON, HTML, CSS, TOML, CSV, and .env
+- **[Secrets-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.secrets-le)** - Detect and sanitize credentials locally, before you commit
+- **[Scrape-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.scrape-le)** - Check whether a page is scrapeable before you write the scraper
+- **[Colors-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.colors-le)** - Extract and analyze colors from CSS, SCSS, LESS, Stylus, HTML, JS/TS, and SVG
+- **[URLs-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.urls-le)** - Extract URLs from documentation, configs, and code
+- **[Regex-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.regex-le)** - Find, test, and validate the regex patterns in the current file
+- **[Dates-LE](https://marketplace.visualstudio.com/items?itemName=nolindnaidoo.dates-le)** - Extract and analyze dates from logs, configs, and code
+
+**Contact Developer** — [GitHub](https://github.com/nolindnaidoo) · [LinkedIn](https://www.linkedin.com/in/nolindnaidoo/)
+
+## License
+
+MIT — see [LICENSE](https://github.com/nolindnaidoo/pixelcoords/blob/main/LICENSE).
