@@ -269,10 +269,16 @@ physical pixels on Windows but logical points on macOS. `cliclick` and
 | `wait` | poll budgets and conditions | stable |
 | `emit` | click code for pyautogui, cliclick, xdotool, and more | grows with targets |
 | `report` | one envelope and schema counter for every command | stable |
-| `points`, `duration`, `snap`, `config`, `strings` | parsing and support | stable |
+| `points`, `duration`, `config` | parsing and support | stable |
 
 Full API, every item:
 **[docs.rs/pixelcoords-core](https://docs.rs/pixelcoords-core)**
+
+Some modules are `pub` and **not** part of this API — the overlay's
+rasterizer, embedded font, string table, editing state, snapping, key
+grammar and window matcher. They are public only because the binary is a
+separate crate and can reach nothing else. They carry `#[doc(hidden)]`,
+do not appear on docs.rs, and are not covered by this crate's versioning.
 
 ## Testing
 
