@@ -207,6 +207,7 @@ is the other half of that loop.
 **Rust**
 
 - **[pixelactions](https://github.com/nolindnaidoo/pixelactions)** - Perform the interaction and confirm it landed · [pixelactions.dev](https://pixelactions.dev)
+- **[scrape-le](https://github.com/nolindnaidoo/scrape-le/tree/main/crate)** - Check whether a page is scrapeable before the scraper is written · [crates.io](https://crates.io/crates/scrape-le)
 
 **VS Code Extensions** — every tool in the family, one page: **[letools.dev](https://letools.dev)**
 
