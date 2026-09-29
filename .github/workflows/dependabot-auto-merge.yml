@@ -17,6 +17,7 @@ permissions:
   pull-requests: write
   checks: read
   statuses: read
+  actions: write
 
 # A rebase pushes a new head; the run for the old one has nothing left to do.
 concurrency:
@@ -99,6 +100,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.html_url }}
         run: gh pr merge --squash "$PR"
+
+      # A merge made with GITHUB_TOKEN starts no push workflow, so main's new
+      # commit would go untested. Each PR was tested on its own base, not on
+      # the main it lands on. Only the CI workflows are dispatched: release
+      # workflows accept a dispatch too, and those publish.
+      - name: Run CI on main
+        if: steps.gate.outputs.eligible == 'true' && steps.checks.outputs.result == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh workflow list --repo "$REPO" --json name,path,state \
+            --jq '.[] | select(.state == "active" and (.name == "CI" or .name == "CI (crate)")) | .path' |
+          while read -r workflow; do
+            echo "dispatching $workflow on main"
+            gh workflow run "$workflow" --repo "$REPO" --ref main
+          done
 
       - name: Explain a skip
         if: steps.gate.outputs.eligible != 'true'
