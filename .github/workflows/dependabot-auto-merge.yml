@@ -1,0 +1,105 @@
+# Merges a Dependabot pull request once every other check on its head commit
+# has passed. Majors wait for a person; everything else, runtime dependencies
+# included, is gated by CI rather than by a human. A merge publishes nothing:
+# extension and crate releases are manual, and a site deploy is the same push
+# a person's merge would make.
+#
+# The same file in every repository. letools-site's check-fleet holds the
+# sixteen tool repos to it byte for byte.
+name: Dependabot auto-merge
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+# A rebase pushes a new head; the run for the old one has nothing left to do.
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Read the update metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide eligibility
+        id: gate
+        env:
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+        run: |
+          # Actions pinned to a commit SHA carry no semver, so Dependabot
+          # reports no update type for them. Refusing those skipped every
+          # action bump in every repository.
+          eligible=false
+          case "$UPDATE_TYPE" in
+            version-update:semver-patch|version-update:semver-minor) eligible=true ;;
+            "") [ "$ECOSYSTEM" = "github_actions" ] && eligible=true ;;
+          esac
+          echo "ecosystem=$ECOSYSTEM update-type=${UPDATE_TYPE:-none} eligible=$eligible"
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for every other check to pass
+        if: steps.gate.outputs.eligible == 'true'
+        id: checks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          SELF: ${{ github.job }}
+        run: |
+          # Every check run and commit status on the head, this job excluded.
+          # A workflow can start late, so "all settled" has to hold on two
+          # consecutive polls before it counts.
+          settled_once=false
+          for i in $(seq 1 330); do
+            runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
+              --jq ".check_runs[] | select(.name != \"$SELF\") | {status, conclusion}" | jq -s .)
+            statuses=$(gh api "repos/$REPO/commits/$SHA/status" --jq '[.statuses[] | .state]')
+            total=$(jq 'length' <<<"$runs")
+            pending=$(( $(jq '[.[] | select(.status != "completed")] | length' <<<"$runs") \
+                      + $(jq '[.[] | select(. == "pending")] | length' <<<"$statuses") ))
+            bad=$(( $(jq '[.[] | select(.status == "completed" and (.conclusion | IN("success","neutral","skipped") | not))] | length' <<<"$runs") \
+                  + $(jq '[.[] | select(. == "failure" or . == "error")] | length' <<<"$statuses") ))
+            if [ "$bad" -gt 0 ]; then
+              echo "::error::A check on $SHA did not pass; leaving the pull request open."
+              echo "result=failure" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$total" -gt 0 ] && [ "$pending" -eq 0 ]; then
+              if [ "$settled_once" = true ]; then
+                echo "result=success" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              settled_once=true
+            else
+              settled_once=false
+            fi
+            sleep 20
+          done
+          echo "::error::Checks on $SHA did not settle in time; leaving the pull request open."
+          echo "result=timeout" >> "$GITHUB_OUTPUT"
+
+      - name: Merge
+        if: steps.gate.outputs.eligible == 'true' && steps.checks.outputs.result == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --squash "$PR"
+
+      - name: Explain a skip
+        if: steps.gate.outputs.eligible != 'true'
+        run: echo "Major update; left open for a person to review."
