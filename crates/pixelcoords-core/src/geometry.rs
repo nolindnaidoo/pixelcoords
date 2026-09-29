@@ -756,7 +756,9 @@ fn poly_interior_point(points: &[Point]) -> Point {
         let row = bb.y.saturating_add(offset);
         let crossings = scanline_spans(points, row);
         let widest = crossings
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .filter_map(|pair| match pair {
                 [left, right] if right > left => Some((right - left, (left + right) / 2.0)),
                 _ => None,

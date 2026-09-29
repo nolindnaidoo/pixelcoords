@@ -47,7 +47,9 @@ impl Baseline {
     pub fn from_rgba(w: usize, h: usize, rgba: &[u8]) -> Result<Self, DiffError> {
         assert_eq!(rgba.len(), w * h * 4, "rgba buffer matches dimensions");
         let mask: Vec<bool> = rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|p| p[3] >= MASK_ALPHA_FLOOR)
             .collect();
         let masked_px = mask.iter().filter(|m| **m).count() as u64;
