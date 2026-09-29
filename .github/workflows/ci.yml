@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # dependabot-auto-merge.yml dispatches this on main after it merges: a
+  # merge made with GITHUB_TOKEN starts no push run of its own.
+  workflow_dispatch:
 
 permissions:
   contents: read
