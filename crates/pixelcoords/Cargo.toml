@@ -24,7 +24,7 @@ categories = [
 pixelcoords-core = { path = "../pixelcoords-core", version = "0.7.7" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-dirs = "6"
+dirs = "7"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 log = "0.4"
