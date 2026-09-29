@@ -145,7 +145,7 @@ unsafe fn copy_pixels(image: *mut c_void) -> Result<RgbaImage> {
         for row in raw.chunks_exact(bytes_per_row).take(height) {
             buffer.extend_from_slice(&row[..width * 4]);
         }
-        for pixel in buffer.chunks_exact_mut(4) {
+        for pixel in buffer.as_chunks_mut::<4>().0.iter_mut() {
             pixel.swap(0, 2);
         }
         CFRelease(data);
