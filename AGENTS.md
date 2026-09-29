@@ -75,6 +75,26 @@ Flat over nested, guards over branches:
 - **User-visible strings** route through `core::strings` so localization
   can land later without a refactor. The embedded JetBrains Mono covers
   Latin, Cyrillic, and Greek; text outside that coverage will not render.
+- **Never run screen-dependent tests on a desktop in use.** This tool
+  captures the real screen, so any `find` score, `diff` percentage, poll
+  count, `--relocate` delta or timing figure taken while someone is at the
+  machine measures *their activity*, not the code — not a pass worth
+  trusting, not a failure worth investigating. The cross-platform scenario
+  harnesses on macOS, Windows and Linux CI are where those tests run:
+  write the test, push it, read the CI result. Do not run it locally
+  first. If one somehow runs and fails, say plainly that the figure came
+  from a live desktop and **never name a cause** — not "the menu bar
+  changed", not "the screen scrolled" — unless it has been checked on a
+  quiet machine. Never publish a benchmark from a contended machine into a
+  CHANGELOG, release note or PR without labelling it as such. Ask for a
+  quiesced machine only when CI genuinely cannot cover it (the overlay,
+  `--target`, real input synthesis on macOS/Windows).
+- **macOS capture needs the Screen Recording TCC grant, attributed to the
+  terminal app that launches the binary.** Without it, capture does not
+  error — it silently returns wallpaper-only pixels, so every downstream
+  result is wrong in a way that looks like a logic bug. An agent shell
+  does not hold the grant even when the user's own terminal does, which
+  makes interactive capture runs theirs to perform, not ours.
 
 ## Coordinates (read before touching geometry, capture, or save)
 
@@ -192,8 +212,20 @@ Measuring coverage locally:
 ```bash
 rustup component add llvm-tools-preview
 cargo install cargo-llvm-cov
+cargo llvm-cov clean --workspace          # not optional, see below
 cargo llvm-cov -p pixelcoords-core --summary-only
 ```
+
+**Always `clean --workspace` first.** `cargo llvm-cov` merges profile data
+across runs, so measuring, changing code, and measuring again produces a report
+where the same function appears twice under two crate hashes with one copy
+cold — roughly halving the apparent coverage. `session.rs` once reported 77.47%
+when it was actually 96.61%, and correct code was nearly reworked to chase a
+regression that did not exist. CI always starts from a clean checkout, so this
+never reproduces there and presents as a genuine local-vs-CI discrepancy.
+Symptom that you forgot: two different crate hashes for one symbol in
+`cargo llvm-cov report --json`, or coverage dropping further than the size of
+the change explains.
 
 Scoped to the core crate, as the floor is. Measuring `--workspace` folds
 in the binary, which is largely window-system plumbing that is verified on
@@ -295,3 +327,26 @@ fabricated point with `ok: true` regardless...
 because an entry that explains why a bug mattered is worth more than a
 list of subjects. The prefix helps someone scan `git log`; it does not
 replace the changelog.
+
+### Releases stack until 1.0.0
+
+While the hand-verification issues are open, fixes for **pixelcoords,
+pixelcoords-core, pixelactions and pixelactions-core** land on `main` and stop
+there. No tag, no GitHub release, no crates.io publish per fix — they
+accumulate until a single **1.0.0** cut across all four crates, both repos, and
+both sites.
+
+1.0 is a promise about the API and should not be made until those issues are
+worked. On Wayland only `click` has ever been run through a full flow, so
+`type`, `key`, `scroll` and `drag` could still need behavioural fixes — those
+are comfortable at 0.x and awkward after. Going straight to 1.0.0 also buys a
+caret pin (`"1.0.0"` = `>=1.0.0, <2.0.0`) that never needs bumping again,
+ending the cross-crate pin churn that pre-1.0 minors caused.
+
+So: do not propose tagging, releasing or publishing during this period. Land
+the fix, say it is stacked, move on. Intermediate version numbers do not matter
+because they will never be published — do not spend effort on per-fix bumps.
+Before the cut, do a `pub` surface pass on both cores, since after 1.0
+everything public is a commitment and removing it costs a major.
+
+Delete this subsection once 1.0.0 ships.
