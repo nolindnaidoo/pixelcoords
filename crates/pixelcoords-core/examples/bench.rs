@@ -64,7 +64,7 @@ fn row(name: &str, detail: &str, elapsed: Duration) {
 fn textured(w: usize, h: usize) -> Vec<u8> {
     let mut rgba = vec![0u8; w * h * 4];
     let mut state = 0x2545_F491_4F6C_DD1Du64;
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0.iter_mut() {
         state ^= state << 13;
         state ^= state >> 7;
         state ^= state << 17;
