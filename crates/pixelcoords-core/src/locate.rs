@@ -43,7 +43,9 @@ impl GrayImage {
     pub fn from_rgba(w: usize, h: usize, rgba: &[u8]) -> Self {
         assert_eq!(rgba.len(), w * h * 4, "rgba buffer matches dimensions");
         let px = rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|p| luma(p[0], p[1], p[2]))
             .collect();
         Self { w, h, px }
@@ -73,7 +75,9 @@ impl Template {
     pub fn from_rgba(w: usize, h: usize, rgba: &[u8]) -> Self {
         let gray = GrayImage::from_rgba(w, h, rgba);
         let mask = rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|p| p[3] >= MASK_ALPHA_FLOOR)
             .collect();
         Self { gray, mask }
